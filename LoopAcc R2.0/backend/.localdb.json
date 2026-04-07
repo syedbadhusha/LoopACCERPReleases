@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "id": "93c469b8-34d6-4bdb-b44a-6a4615a2d1fe",
+      "email": "syedbadhusha21@gmail.com",
+      "password_hash": "$2a$10$bziZZZ66SyEl6rVMbzjEZuiuJFXut/izO3.372l4zPX/Z/5Ztgdg6",
+      "full_name": "Syed Badhusha",
+      "created_at": "2026-03-08T07:06:32.618Z",
+      "updated_at": "2026-03-08T07:10:19.255Z",
+      "_id": "1772953592618_aavp1fbx",
+      "reset_token": "897444",
+      "reset_token_expiry": "2026-03-08T07:25:19.254Z"
+    }
+  ],
+  "companies": [],
+  "company_users": [],
+  "groups": [],
+  "ledgers": [],
+  "item_master": [],
+  "uom_master": [],
+  "stock_groups": [],
+  "stock_categories": [],
+  "vouchers": [],
+  "ledger_entries": [],
+  "batch_allocation": [],
+  "bills": [],
+  "company_sessions": []
+}
