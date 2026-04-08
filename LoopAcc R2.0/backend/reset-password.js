@@ -6,7 +6,7 @@ import readline from "readline";
 dotenv.config();
 
 const mongoUri = process.env.MONGODB_URI;
-const mongoDbName = process.env.MONGODB_DB_NAME || "tally_clone";
+const authDbName = process.env.AUTH_DB_NAME || "loopacc_auth";
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -25,7 +25,7 @@ async function resetPassword() {
   try {
     client = new MongoClient(mongoUri);
     await client.connect();
-    const db = client.db(mongoDbName);
+    const db = client.db(authDbName);
 
     // List all users
     const users = await db.collection("users").find({}).toArray();

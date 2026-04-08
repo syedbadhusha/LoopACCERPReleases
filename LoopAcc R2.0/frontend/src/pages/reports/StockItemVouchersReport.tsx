@@ -456,10 +456,10 @@ const StockItemVouchersReport = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
         {/* ── header ── */}
-        <div className="flex items-center justify-between mb-6">
           <div className="flex items-center">
             <Button variant="ghost" onClick={() => navigate(-1)} className="mr-4">
               <ArrowLeft className="h-4 w-4" />
@@ -467,6 +467,9 @@ const StockItemVouchersReport = () => {
             <h1 className="text-2xl font-bold">Stock Item Vouchers</h1>
           </div>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-7xl mx-auto p-6">
 
         {/* ── filters ── */}
         <Card className="mb-6">
@@ -710,6 +713,7 @@ const StockItemVouchersReport = () => {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
     </div>
   );

@@ -110,6 +110,7 @@ const Dashboard = () => {
         items: [
           { name: 'Group Master', icon: BookOpen, path: '/groups' },
           { name: 'Ledger Master', icon: BookOpen, path: '/ledger-master' },
+          { name: 'Voucher Type Master', icon: FileText, path: '/voucher-types' },
         ]
       },
       {
@@ -126,12 +127,7 @@ const Dashboard = () => {
     {
       title: 'Transactions',
       items: [
-        { name: 'Sales', icon: Receipt, path: '/sales' },
-        { name: 'Credit Note', icon: Receipt, path: '/credit-note' },
-        { name: 'Purchase', icon: CreditCard, path: '/purchase' },
-        { name: 'Debit Note', icon: CreditCard, path: '/debit-note' },
-        { name: 'Payment', icon: CreditCard, path: '/payment' },
-        { name: 'Receipt', icon: Receipt, path: '/receipt' },
+        { name: 'Vouchers', icon: FileText, path: '/vouchers' },
       ]
     },
     {
@@ -160,9 +156,9 @@ const Dashboard = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-screen flex flex-col overflow-hidden bg-background">
       {/* Header */}
-      <header className="border-b bg-card shadow-sm">
+      <header className="flex-shrink-0 border-b bg-card shadow-sm">
         <div className="flex h-16 items-center justify-between px-6">
           <div className="flex items-center space-x-4">
             <Building2 className="h-8 w-8 text-primary" />
@@ -195,9 +191,9 @@ const Dashboard = () => {
         </div>
       </header>
 
-      <div className="flex">
+      <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-64 border-r bg-card h-[calc(100vh-4rem)]">
+        <aside className="w-64 border-r bg-card overflow-y-auto">
           <div className="p-4">
             <h2 className="text-lg font-semibold mb-4 text-foreground">Menu</h2>
             <nav className="space-y-6">
@@ -250,7 +246,7 @@ const Dashboard = () => {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 p-6">
+        <main className="flex-1 overflow-y-auto p-6">
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-foreground mb-2">Dashboard</h1>
             <p className="text-muted-foreground">
@@ -285,7 +281,7 @@ const Dashboard = () => {
 
           {/* Quick Actions */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/sales')}>
+            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=sales')}>
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Plus className="mr-2 h-5 w-5" />
@@ -297,7 +293,7 @@ const Dashboard = () => {
               </CardHeader>
             </Card>
 
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/purchase')}>
+            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=purchase')}>
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Plus className="mr-2 h-5 w-5" />
@@ -309,7 +305,7 @@ const Dashboard = () => {
               </CardHeader>
             </Card>
 
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/payment')}>
+            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=payment')}>
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <CreditCard className="mr-2 h-5 w-5" />
@@ -321,7 +317,7 @@ const Dashboard = () => {
               </CardHeader>
             </Card>
 
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/receipt')}>
+            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=receipt')}>
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Receipt className="mr-2 h-5 w-5" />

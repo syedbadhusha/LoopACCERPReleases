@@ -4,7 +4,7 @@ import { MongoClient } from "mongodb";
 dotenv.config();
 
 const mongoUri = process.env.MONGODB_URI;
-const mongoDbName = process.env.MONGODB_DB_NAME || "tally_clone";
+const authDbName = process.env.AUTH_DB_NAME || "loopacc_auth";
 
 async function listUsers() {
   console.log("🔍 Checking User Accounts in Database");
@@ -14,7 +14,7 @@ async function listUsers() {
   try {
     client = new MongoClient(mongoUri);
     await client.connect();
-    const db = client.db(mongoDbName);
+    const db = client.db(authDbName);
 
     const users = await db.collection("users").find({}).toArray();
 

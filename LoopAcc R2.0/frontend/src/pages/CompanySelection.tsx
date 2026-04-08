@@ -5,16 +5,58 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Building2, Plus, LogOut } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Building2, Plus, LogOut, Trash2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { API_BASE_URL } from '@/config/runtime';
 
 const CompanySelection = () => {
   const { user, signOut } = useAuth();
-  const { companies, loading, selectCompany } = useCompany();
+  const { companies, loading, selectCompany, fetchCompanies } = useCompany();
   const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const handleCompanySelect = (company: any) => {
     selectCompany(company);
     navigate('/company-login');
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent, company: any) => {
+    e.stopPropagation();
+    setConfirmDelete({ id: company.id, name: company.name });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!confirmDelete || !user) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/companies/${confirmDelete.id}?userId=${user.id}`,
+        { method: 'DELETE' }
+      );
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message || 'Failed to delete company');
+
+      toast({ title: 'Deleted', description: `"${confirmDelete.name}" has been deleted.` });
+      await fetchCompanies();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(null);
+    }
   };
 
   return (
@@ -90,9 +132,20 @@ const CompanySelection = () => {
                   onClick={() => handleCompanySelect(company)}
                 >
                   <CardHeader>
-                    <CardTitle className="flex items-center">
-                      <Building2 className="mr-3 h-5 w-5 text-primary" />
-                      {company.name}
+                    <CardTitle className="flex items-center justify-between">
+                      <span className="flex items-center">
+                        <Building2 className="mr-3 h-5 w-5 text-primary" />
+                        {company.name}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+                        onClick={(e) => handleDeleteClick(e, company)}
+                        title="Delete company"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -131,6 +184,30 @@ const CompanySelection = () => {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!confirmDelete} onOpenChange={(open) => { if (!open) setConfirmDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Company</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{confirmDelete?.name}</strong>?
+              <br />
+              This will permanently delete the company and all its data including vouchers, ledgers, items, and settings. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90"
+              onClick={handleDeleteConfirm}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : 'Delete Company'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

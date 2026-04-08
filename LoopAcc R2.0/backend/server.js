@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { connectToMongo, initializeDatabase } from "./db.js";
+import { connectToMongo, initializeDatabase, initializeAuthDatabase } from "./db.js";
 import authRouter from "./routes/auth.js";
 import companiesRouter from "./routes/companies.js";
 import groupsRouter from "./routes/groups.js";
@@ -14,6 +14,7 @@ import stockCategoriesRouter from "./routes/stockCategories.js";
 import vouchersRouter from "./routes/vouchers.js";
 import settingsRouter from "./routes/settings.js";
 import billsRouter from "./routes/bills.js";
+import voucherTypesRouter from "./routes/voucherTypes.js";
 
 dotenv.config();
 
@@ -90,6 +91,7 @@ async function ensureDatabaseReady() {
   dbInitPromise = (async () => {
     try {
       await initializeDatabase();
+      await initializeAuthDatabase();
       dbInitialized = true;
       dbLastInitError = null;
       dbLastInitFailureAt = 0;
@@ -171,6 +173,7 @@ app.use("/api/stock-categories", stockCategoriesRouter);
 app.use("/api/vouchers", vouchersRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/bills", billsRouter);
+app.use("/api/voucher-types", voucherTypesRouter);
 
 // 404 handler
 app.use((req, res) => {

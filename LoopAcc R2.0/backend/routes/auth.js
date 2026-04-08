@@ -1,7 +1,7 @@
 import express from "express";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
-import { getDb } from "../db.js";
+import { getUserDb } from "../db.js";
 import { sendPasswordResetEmail } from "../services/emailService.js";
 
 const router = express.Router();
@@ -22,7 +22,7 @@ router.post("/signup", async (req, res) => {
       });
     }
 
-    const db = getDb();
+    const db = getUserDb();
 
     // Check if user already exists
     const existingUser = await db
@@ -84,7 +84,7 @@ router.post("/check-email", async (req, res) => {
       });
     }
 
-    const db = getDb();
+    const db = getUserDb();
     const user = await db.collection("users").findOne({ email: normalizedEmail });
 
     res.json({
@@ -116,7 +116,7 @@ router.post("/signin", async (req, res) => {
       });
     }
 
-    const db = getDb();
+    const db = getUserDb();
 
     // Find user by email
     const user = await db.collection("users").findOne({ email: normalizedEmail });
@@ -198,7 +198,7 @@ router.post("/request-password-reset", async (req, res) => {
       });
     }
 
-    const db = getDb();
+    const db = getUserDb();
 
     // Find user
     const user = await db.collection("users").findOne({ email: normalizedEmail });
@@ -295,7 +295,7 @@ router.post("/verify-reset-token", async (req, res) => {
       });
     }
 
-    const db = getDb();
+    const db = getUserDb();
 
     // Find user with valid token
     const user = await db.collection("users").findOne({
@@ -347,7 +347,7 @@ router.post("/reset-password", async (req, res) => {
       });
     }
 
-    const db = getDb();
+    const db = getUserDb();
 
     // Find user with valid token
     const user = await db.collection("users").findOne({
@@ -396,3 +396,4 @@ router.post("/reset-password", async (req, res) => {
 });
 
 export default router;
+

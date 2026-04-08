@@ -106,16 +106,16 @@ const handleEdit = (voucherId: string, voucherType: string) => {
     localStorage.setItem('voucherHistory_voucherType', voucherType);
 
     const typeMap: Record<string, string> = {
-      sales: '/sales',
-      'credit-note': '/credit-note',
-      purchase: '/purchase',
-      'debit-note': '/debit-note',
-      payment: '/payment',
-      receipt: '/receipt',
+      sales: '/vouchers?type=sales',
+      'credit-note': '/vouchers?type=credit-note',
+      purchase: '/vouchers?type=purchase',
+      'debit-note': '/vouchers?type=debit-note',
+      payment: '/vouchers?type=payment',
+      receipt: '/vouchers?type=receipt',
     };    
     const path = typeMap[voucherType];
     if (path) {
-      navigate(`${path}?edit=${voucherId}`, { state: { returnTo: '/reports/voucher-history' } });
+      navigate(`${path}&edit=${voucherId}`, { state: { returnTo: '/reports/voucher-history' } });
     } else {
       toast({
         title: "Edit Not Supported",
@@ -241,9 +241,9 @@ const handleEdit = (voucherId: string, voucherType: string) => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <Button variant="ghost" onClick={handleBack} className="mr-4">
               <ArrowLeft className="h-4 w-4" />
@@ -255,6 +255,9 @@ const handleEdit = (voucherId: string, voucherType: string) => {
             Print Report
           </Button>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-7xl mx-auto p-6">
 
         <Card className="mb-6">
           <CardHeader>
@@ -369,6 +372,7 @@ const handleEdit = (voucherId: string, voucherType: string) => {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   );

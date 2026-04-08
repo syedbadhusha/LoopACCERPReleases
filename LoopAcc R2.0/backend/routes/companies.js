@@ -294,4 +294,71 @@ router.post("/session/logout", async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/companies/:companyId
+ * Delete a company and all its related data
+ */
+router.delete("/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { userId } = req.query;
+
+    if (!companyId || !userId) {
+      return res.status(400).json({
+        success: false,
+        message: "companyId and userId are required",
+      });
+    }
+
+    const db = getDb();
+
+    // Verify the company belongs to the requesting user
+    const company = await db.collection("companies").findOne({
+      id: String(companyId),
+      user_id: String(userId),
+    });
+
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: "Company not found or access denied",
+      });
+    }
+
+    // Delete all related data in parallel
+    await Promise.all([
+      db.collection("company_users").deleteMany({ company_id: companyId }),
+      db.collection("company_sessions").deleteMany({ company_id: companyId }),
+      db.collection("groups").deleteMany({ company_id: companyId }),
+      db.collection("ledgers").deleteMany({ company_id: companyId }),
+      db.collection("items").deleteMany({ company_id: companyId }),
+      db.collection("vouchers").deleteMany({ company_id: companyId }),
+      db.collection("voucher_details").deleteMany({ company_id: companyId }),
+      db.collection("ledger_entries").deleteMany({ company_id: companyId }),
+      db.collection("bills").deleteMany({ company_id: companyId }),
+      db.collection("batch_allocations").deleteMany({ company_id: companyId }),
+      db.collection("uom").deleteMany({ company_id: companyId }),
+      db.collection("stock_groups").deleteMany({ company_id: companyId }),
+      db.collection("stock_categories").deleteMany({ company_id: companyId }),
+      db.collection("voucher_types").deleteMany({ company_id: companyId }),
+    ]);
+
+    // Finally delete the company itself
+    await db.collection("companies").deleteOne({ id: String(companyId) });
+
+    console.log(`Company ${companyId} deleted by user ${userId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Company deleted successfully",
+    });
+  } catch (error) {
+    console.error("Company delete API error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete company",
+    });
+  }
+});
+
 export default router;

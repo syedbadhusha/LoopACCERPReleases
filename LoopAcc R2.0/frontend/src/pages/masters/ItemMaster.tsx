@@ -4,6 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Plus, Edit, Trash2 } from 'lucide-react';
@@ -35,6 +42,78 @@ const ItemMaster = () => {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [showTaxHistory, setShowTaxHistory] = useState(false);
   const [selectedItemForHistory, setSelectedItemForHistory] = useState<any>(null);
+  const [uomDialogOpen, setUomDialogOpen] = useState(false);
+  const [uomSubmitting, setUomSubmitting] = useState(false);
+  const [quickUom, setQuickUom] = useState({ name: '', symbol: '', decimal_places: 2 });
+  const [stockGroupDialogOpen, setStockGroupDialogOpen] = useState(false);
+  const [stockGroupSubmitting, setStockGroupSubmitting] = useState(false);
+  const [quickStockGroup, setQuickStockGroup] = useState({ name: '', alias: '', parent_group_id: '' });
+  const [stockCatDialogOpen, setStockCatDialogOpen] = useState(false);
+  const [stockCatSubmitting, setStockCatSubmitting] = useState(false);
+  const [quickStockCat, setQuickStockCat] = useState({ name: '', alias: '' });
+
+  const handleCreateQuickUom = async () => {
+    if (!quickUom.name.trim() || !selectedCompany) return;
+    setUomSubmitting(true);
+    try {
+      const resp = await fetch('http://localhost:5000/api/uom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: quickUom.name.trim(), symbol: quickUom.symbol.trim() || quickUom.name.trim(), decimal_places: quickUom.decimal_places, company_id: selectedCompany.id }),
+      });
+      const json = await resp.json();
+      if (!json.success) throw new Error(json.message || 'Failed to create UOM');
+      toast({ title: 'Success', description: `UOM "${quickUom.name.trim()}" created!` });
+      await fetchData();
+      setFormData(prev => ({ ...prev, uom_id: json.data.id }));
+      setUomDialogOpen(false);
+      setQuickUom({ name: '', symbol: '', decimal_places: 2 });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to create UOM', variant: 'destructive' });
+    } finally { setUomSubmitting(false); }
+  };
+
+  const handleCreateQuickStockGroup = async () => {
+    if (!quickStockGroup.name.trim() || !selectedCompany) return;
+    setStockGroupSubmitting(true);
+    try {
+      const resp = await fetch('http://localhost:5000/api/stock-groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: quickStockGroup.name.trim(), alias: quickStockGroup.alias.trim() || null, parent_group_id: quickStockGroup.parent_group_id || null, company_id: selectedCompany.id }),
+      });
+      const json = await resp.json();
+      if (!json.success) throw new Error(json.message || 'Failed to create stock group');
+      toast({ title: 'Success', description: `Stock Group "${quickStockGroup.name.trim()}" created!` });
+      await fetchData();
+      setFormData(prev => ({ ...prev, stock_group_id: json.data.id }));
+      setStockGroupDialogOpen(false);
+      setQuickStockGroup({ name: '', alias: '', parent_group_id: '' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to create stock group', variant: 'destructive' });
+    } finally { setStockGroupSubmitting(false); }
+  };
+
+  const handleCreateQuickStockCat = async () => {
+    if (!quickStockCat.name.trim() || !selectedCompany) return;
+    setStockCatSubmitting(true);
+    try {
+      const resp = await fetch('http://localhost:5000/api/stock-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: quickStockCat.name.trim(), alias: quickStockCat.alias.trim() || null, company_id: selectedCompany.id }),
+      });
+      const json = await resp.json();
+      if (!json.success) throw new Error(json.message || 'Failed to create stock category');
+      toast({ title: 'Success', description: `Stock Category "${quickStockCat.name.trim()}" created!` });
+      await fetchData();
+      setFormData(prev => ({ ...prev, stock_category_id: json.data.id }));
+      setStockCatDialogOpen(false);
+      setQuickStockCat({ name: '', alias: '' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to create stock category', variant: 'destructive' });
+    } finally { setStockCatSubmitting(false); }
+  };
   
   const [formData, setFormData] = useState({
     uom_id: '',
@@ -539,40 +618,33 @@ const ItemMaster = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <Button variant="ghost" onClick={() => { if (window.history.length > 1) { navigate(-1); } else { navigate('/dashboard'); } }} className="mr-4">
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <h1 className="text-2xl font-bold">Item Master</h1>
+            <div>
+              <h1 className="text-2xl font-bold">Item Master</h1>
+              <p className="text-sm text-muted-foreground">{selectedCompany.name}</p>
+            </div>
           </div>
           <Button onClick={() => setShowForm(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Add Item
           </Button>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto p-6">
 
-        {/* Company Info */}
-        <Card className="mb-6">
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label className="text-sm text-muted-foreground">Selected Company</Label>
-                <p className="font-medium">{selectedCompany.name}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {showForm ? (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>{editingItem ? 'Edit Item' : 'Add New Item'}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
+        <Dialog open={showForm} onOpenChange={(open) => { if (!open) resetForm(); }}>
+          <DialogContent className="max-w-4xl overflow-y-auto max-h-[90vh]">
+            <DialogHeader>
+              <DialogTitle>{editingItem ? 'Edit Item' : 'Add New Item'}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   
                   <div>
@@ -587,10 +659,7 @@ const ItemMaster = () => {
                           label: `${uom.name} (${uom.symbol})`,
                         }))}
                       />
-                       <Button type="button" variant="outline" size="sm" onClick={() => {
-                         const returnPath = window.location.pathname;
-                         navigate('/uom-master', { state: { returnTo: returnPath, autoShowForm: true } });
-                       }}>
+                       <Button type="button" variant="outline" size="icon" onClick={() => setUomDialogOpen(true)} title="Create new UOM">
                          <Plus className="h-4 w-4" />
                        </Button>
                     </div>
@@ -605,10 +674,7 @@ const ItemMaster = () => {
                         placeholder="Select Stock Group"
                         options={stockGroups.map((group) => ({ value: group.id, label: group.name }))}
                       />
-                      <Button type="button" variant="outline" size="sm" onClick={() => {
-                        const returnPath = window.location.pathname;
-                        navigate('/stock-group-master', { state: { returnTo: returnPath, autoShowForm: true } });
-                      }}>
+                      <Button type="button" variant="outline" size="icon" onClick={() => setStockGroupDialogOpen(true)} title="Create new stock group">
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>
@@ -623,10 +689,7 @@ const ItemMaster = () => {
                         placeholder="Select Stock Category"
                         options={stockCategories.map((category) => ({ value: category.id, label: category.name }))}
                       />
-                      <Button type="button" variant="outline" size="sm" onClick={() => {
-                        const returnPath = window.location.pathname;
-                        navigate('/stock-category-master', { state: { returnTo: returnPath, autoShowForm: true } });
-                      }}>
+                      <Button type="button" variant="outline" size="icon" onClick={() => setStockCatDialogOpen(true)} title="Create new stock category">
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>
@@ -957,24 +1020,20 @@ const ItemMaster = () => {
                   </div>
                 </div>
 
-                <div className="flex justify-end space-x-4 mt-6">
+                <DialogFooter className="mt-6">
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
                   </Button>
                   <Button type="submit" disabled={loading}>
                     {loading ? 'Saving...' : (editingItem ? 'Update' : 'Save')}
                   </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        ) : null}
+                </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Items List</CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="pt-4">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1038,6 +1097,7 @@ const ItemMaster = () => {
             </Table>
           </CardContent>
         </Card>
+        </div>
       </div>
 
       {/* Tax History Modal */}
@@ -1115,6 +1175,60 @@ const ItemMaster = () => {
           </Card>
         </div>
       )}
+      {/* Quick Create UOM Dialog */}
+      <Dialog open={uomDialogOpen} onOpenChange={(o) => { if (!o) { setUomDialogOpen(false); setQuickUom({ name: '', symbol: '', decimal_places: 2 }); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Create New UOM</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div><Label>UOM Name *</Label><Input value={quickUom.name} onChange={(e) => setQuickUom(p => ({ ...p, name: e.target.value }))} placeholder="e.g., Kilogram" autoFocus /></div>
+            <div><Label>Symbol</Label><Input value={quickUom.symbol} onChange={(e) => setQuickUom(p => ({ ...p, symbol: e.target.value }))} placeholder="e.g., kg" /></div>
+            <div><Label>Decimal Places</Label><Input type="number" value={quickUom.decimal_places} onChange={(e) => setQuickUom(p => ({ ...p, decimal_places: parseInt(e.target.value) || 0 }))} min={0} max={6} /></div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { setUomDialogOpen(false); setQuickUom({ name: '', symbol: '', decimal_places: 2 }); }}>Cancel</Button>
+            <Button type="button" onClick={handleCreateQuickUom} disabled={uomSubmitting || !quickUom.name.trim()}>{uomSubmitting ? 'Creating...' : 'Create UOM'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Create Stock Group Dialog */}
+      <Dialog open={stockGroupDialogOpen} onOpenChange={(o) => { if (!o) { setStockGroupDialogOpen(false); setQuickStockGroup({ name: '', alias: '', parent_group_id: '' }); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Create New Stock Group</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div><Label>Stock Group Name *</Label><Input value={quickStockGroup.name} onChange={(e) => setQuickStockGroup(p => ({ ...p, name: e.target.value }))} placeholder="Enter stock group name" autoFocus /></div>
+            <div><Label>Alias</Label><Input value={quickStockGroup.alias} onChange={(e) => setQuickStockGroup(p => ({ ...p, alias: e.target.value }))} placeholder="Enter alias (optional)" /></div>
+            <div>
+              <Label>Parent Group</Label>
+              <SearchableDropdown
+                value={quickStockGroup.parent_group_id}
+                onValueChange={(v) => setQuickStockGroup(p => ({ ...p, parent_group_id: v }))}
+                placeholder="None (top-level)"
+                options={stockGroups.map(g => ({ value: g.id, label: g.name }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { setStockGroupDialogOpen(false); setQuickStockGroup({ name: '', alias: '', parent_group_id: '' }); }}>Cancel</Button>
+            <Button type="button" onClick={handleCreateQuickStockGroup} disabled={stockGroupSubmitting || !quickStockGroup.name.trim()}>{stockGroupSubmitting ? 'Creating...' : 'Create Stock Group'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Create Stock Category Dialog */}
+      <Dialog open={stockCatDialogOpen} onOpenChange={(o) => { if (!o) { setStockCatDialogOpen(false); setQuickStockCat({ name: '', alias: '' }); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Create New Stock Category</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div><Label>Stock Category Name *</Label><Input value={quickStockCat.name} onChange={(e) => setQuickStockCat(p => ({ ...p, name: e.target.value }))} placeholder="Enter stock category name" autoFocus /></div>
+            <div><Label>Alias</Label><Input value={quickStockCat.alias} onChange={(e) => setQuickStockCat(p => ({ ...p, alias: e.target.value }))} placeholder="Enter alias (optional)" /></div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { setStockCatDialogOpen(false); setQuickStockCat({ name: '', alias: '' }); }}>Cancel</Button>
+            <Button type="button" onClick={handleCreateQuickStockCat} disabled={stockCatSubmitting || !quickStockCat.name.trim()}>{stockCatSubmitting ? 'Creating...' : 'Create Stock Category'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -92,7 +92,7 @@ const PurchaseRegisterReport = () => {
   };
 
   const handleEdit = (voucherId: string) => {
-    navigate(`/purchase?edit=${voucherId}`, { state: { returnTo: '/reports/purchase-register' } });
+    navigate(`/vouchers?type=purchase&edit=${voucherId}`, { state: { returnTo: '/reports/purchase-register' } });
   };
 
   const handleDelete = async (voucherId: string) => {
@@ -214,9 +214,9 @@ const handleBack = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <Button variant="ghost" onClick={handleBack} className="mr-4">
               <ArrowLeft className="h-4 w-4" />
@@ -228,6 +228,9 @@ const handleBack = () => {
             Print Register
           </Button>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-7xl mx-auto p-6">
 
         <Card className="mb-6">
           <CardHeader>
@@ -335,6 +338,7 @@ const handleBack = () => {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   );

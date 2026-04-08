@@ -4,6 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Plus, Edit, Trash2 } from 'lucide-react';
@@ -173,39 +180,33 @@ const StockGroupMaster = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <Button variant="ghost" onClick={() => { if (window.history.length > 1) { navigate(-1); } else { navigate('/dashboard'); } }} className="mr-4">
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <h1 className="text-2xl font-bold">Stock Group Master</h1>
+            <div>
+              <h1 className="text-2xl font-bold">Stock Group Master</h1>
+              <p className="text-sm text-muted-foreground">{selectedCompany.name}</p>
+            </div>
           </div>
           <Button onClick={() => setShowForm(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Add Stock Group
           </Button>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto p-6">
 
-        <Card className="mb-6">
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label className="text-sm text-muted-foreground">Selected Company</Label>
-                <p className="font-medium">{selectedCompany.name}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {showForm ? (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>{editingGroup ? 'Edit Stock Group' : 'Add New Stock Group'}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
+        <Dialog open={showForm} onOpenChange={(open) => { if (!open) resetForm(); }}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{editingGroup ? 'Edit Stock Group' : 'Add New Stock Group'}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label>Group Name *</Label>
@@ -250,24 +251,20 @@ const StockGroupMaster = () => {
                   </div>
                 </div>
 
-                <div className="flex justify-end space-x-4">
+                <DialogFooter>
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
                   </Button>
                   <Button type="submit" disabled={loading}>
                     {loading ? 'Saving...' : (editingGroup ? 'Update' : 'Save')}
                   </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        ) : null}
+                </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Stock Groups List</CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="pt-4">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -299,6 +296,7 @@ const StockGroupMaster = () => {
             </Table>
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   );

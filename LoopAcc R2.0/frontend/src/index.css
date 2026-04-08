@@ -103,3 +103,14 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+/* ── Sticky table column headers ─────────────────────────────────────────────
+   Works when the table is inside a flex scroll-area (flex-1 overflow-y-auto).
+   The thead sticks at the top of the scroll container, not the viewport.
+*/
+thead tr th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: hsl(var(--card));
+}

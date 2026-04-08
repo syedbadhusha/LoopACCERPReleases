@@ -4,6 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -147,6 +154,39 @@ const LedgerMaster = () => {
   const [ledgerGroups, setLedgerGroups] = useState<LedgerGroup[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingLedger, setEditingLedger] = useState<LedgerRecord | null>(null);
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [groupSubmitting, setGroupSubmitting] = useState(false);
+  const [quickGroup, setQuickGroup] = useState({ name: '', nature: '', parent_id: '' });
+  const GROUP_NATURES = ['Asset', 'Liability', 'Income', 'Expense'];
+
+  const handleCreateQuickGroup = async () => {
+    if (!quickGroup.name.trim() || !selectedCompany) return;
+    setGroupSubmitting(true);
+    try {
+      const resp = await fetch('http://localhost:5000/api/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: quickGroup.name.trim(),
+          nature: quickGroup.nature || null,
+          parent_id: quickGroup.parent_id || null,
+          is_system: false,
+          company_id: selectedCompany.id,
+        }),
+      });
+      const json = await resp.json();
+      if (!json.success) throw new Error(json.message || 'Failed to create group');
+      toast({ title: 'Success', description: `Group "${quickGroup.name.trim()}" created!` });
+      await fetchData();
+      setFormData(prev => ({ ...prev, ledger_group_id: json.data.id }));
+      setGroupDialogOpen(false);
+      setQuickGroup({ name: '', nature: '', parent_id: '' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to create group', variant: 'destructive' });
+    } finally {
+      setGroupSubmitting(false);
+    }
+  };
   const [billAllocationDialog, setBillAllocationDialog] = useState({
     open: false,
     ledgerId: '',
@@ -658,9 +698,9 @@ const LedgerMaster = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <Button
               variant="ghost"
@@ -680,32 +720,25 @@ const LedgerMaster = () => {
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <h1 className="text-2xl font-bold">Ledger Master</h1>
+            <div>
+              <h1 className="text-2xl font-bold">Ledger Master</h1>
+              <p className="text-sm text-muted-foreground">{selectedCompany?.name}</p>
+            </div>
           </div>
           <Button onClick={() => setShowForm(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Add Ledger
           </Button>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto p-6">
 
-        {/* Company Info */}
-        <Card className="mb-6">
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label className="text-sm text-muted-foreground">Selected Company</Label>
-                <p className="font-medium">{selectedCompany?.name}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {showForm ? (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>{editingLedger ? 'Edit Ledger' : 'Add New Ledger'}</CardTitle>
-            </CardHeader>
-            <CardContent>
+        <Dialog open={showForm} onOpenChange={(open) => { if (!open) resetForm(); }}>
+          <DialogContent className="max-w-4xl overflow-y-auto max-h-[90vh]">
+            <DialogHeader>
+              <DialogTitle>{editingLedger ? 'Edit Ledger' : 'Add New Ledger'}</DialogTitle>
+            </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -722,10 +755,7 @@ const LedgerMaster = () => {
                         placeholder="Select Group"
                         options={ledgerGroups.map((group) => ({ value: group.id, label: group.name }))}
                       />
-                      <Button type="button" variant="outline" size="sm" onClick={() => {
-                        const returnPath = window.location.pathname;
-                        navigate('/groups', { state: { returnTo: returnPath, autoShowForm: true } });
-                      }}>
+                      <Button type="button" variant="outline" size="icon" onClick={() => setGroupDialogOpen(true)} title="Create new group">
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>
@@ -1034,24 +1064,20 @@ const LedgerMaster = () => {
                   </div>
                 )}
 
-                <div className="flex justify-end space-x-4">
+                <DialogFooter>
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
                   </Button>
                   <Button type="submit" disabled={loading}>
                     {loading ? 'Saving...' : (editingLedger ? 'Update' : 'Save')}
                   </Button>
-                </div>
+                </DialogFooter>
               </form>
-            </CardContent>
-          </Card>
-        ) : null}
+          </DialogContent>
+        </Dialog>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Ledger List</CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="pt-4">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1099,6 +1125,73 @@ const LedgerMaster = () => {
           </CardContent>
         </Card>
 
+        {/* Quick Create Group Dialog */}
+        <Dialog open={groupDialogOpen} onOpenChange={(o) => { if (!o) { setGroupDialogOpen(false); setQuickGroup({ name: '', nature: '', parent_id: '' }); } }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Create New Group</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div>
+                <Label>Group Name *</Label>
+                <Input
+                  value={quickGroup.name}
+                  onChange={(e) => setQuickGroup(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Enter group name"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <Label>Parent Group</Label>
+                <SearchableDropdown
+                  value={quickGroup.parent_id}
+                  onValueChange={(v) => {
+                    const parentGrp = ledgerGroups.find(g => g.id === v);
+                    setQuickGroup(prev => ({ ...prev, parent_id: v, nature: parentGrp?.nature || prev.nature }));
+                  }}
+                  placeholder="None (top-level)"
+                  options={ledgerGroups.map(g => ({ value: g.id, label: g.name }))}
+                />
+              </div>
+              <div>
+                <Label>Nature</Label>
+                {quickGroup.parent_id && quickGroup.nature ? (
+                  <div className="w-full px-3 py-2 border border-input rounded-md bg-muted text-sm font-medium flex items-center">
+                    {quickGroup.nature}
+                    <span className="ml-2 text-xs text-muted-foreground">✓ (Inherited)</span>
+                  </div>
+                ) : (
+                  <SearchableDropdown
+                    value={quickGroup.nature}
+                    onValueChange={(v) => setQuickGroup(prev => ({ ...prev, nature: v }))}
+                    placeholder="Select nature"
+                    options={GROUP_NATURES.map(n => ({ value: n, label: n }))}
+                  />
+                )}
+              </div>
+              <div>
+                <Label>Grandparent Group</Label>
+                <div className="w-full px-3 py-2 border border-input rounded-md bg-muted text-sm text-muted-foreground flex items-center">
+                  {(() => {
+                    if (!quickGroup.parent_id) return <span className="italic">Select a parent group first</span>;
+                    const parentGrp = ledgerGroups.find(g => g.id === quickGroup.parent_id);
+                    const grandparent = parentGrp?.parent_id ? ledgerGroups.find(g => g.id === parentGrp.parent_id) : null;
+                    return grandparent
+                      ? <><span>{grandparent.name}</span><span className="ml-2 text-xs">✓ (Auto)</span></>
+                      : <span className="italic">-- No Grandparent --</span>;
+                  })()}
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => { setGroupDialogOpen(false); setQuickGroup({ name: '', nature: '', parent_id: '' }); }}>Cancel</Button>
+              <Button type="button" onClick={handleCreateQuickGroup} disabled={groupSubmitting || !quickGroup.name.trim()}>
+                {groupSubmitting ? 'Creating...' : 'Create Group'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Bill-Wise Allocation Dialog */}
         <BillwiseAllocationDialog
           open={billAllocationDialog.open}
@@ -1109,6 +1202,7 @@ const LedgerMaster = () => {
           companyId={selectedCompany?.id || ''}
           balanceType={billAllocationDialog.balanceType}
         />
+        </div>
       </div>
     </div>
   );

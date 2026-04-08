@@ -21,6 +21,7 @@ const PurchaseForm = lazy(() => import("./pages/forms/PurchaseForm"));
 const DebitNoteForm = lazy(() => import("./pages/forms/DebitNoteForm"));
 const PaymentForm = lazy(() => import("./pages/forms/PaymentForm"));
 const ReceiptForm = lazy(() => import("./pages/forms/ReceiptForm"));
+const VoucherForm = lazy(() => import("./pages/forms/VoucherForm"));
 const LedgerMaster = lazy(() => import("./pages/masters/LedgerMaster"));
 const ItemMaster = lazy(() => import("./pages/masters/ItemMaster"));
 const UOMMaster = lazy(() => import("./pages/masters/UOMMaster"));
@@ -29,6 +30,7 @@ const StockGroupMaster = lazy(() => import("./pages/masters/StockGroupMaster"));
 const StockCategoryMaster = lazy(
   () => import("./pages/masters/StockCategoryMaster"),
 );
+const VoucherTypeMaster = lazy(() => import("./pages/masters/VoucherTypeMaster"));
 const CompanyProfile = lazy(() => import("./pages/CompanyProfile"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Reports = lazy(() => import("./pages/reports/Reports"));
@@ -118,6 +120,11 @@ const App: React.FC = () => (
                     <Dashboard />
                   </ProtectedRoute>
                 } />
+                <Route path="/vouchers" element={
+                  <ProtectedRoute requireCompanyLogin>
+                    <VoucherForm />
+                  </ProtectedRoute>
+                } />
                 <Route path="/sales" element={
                   <ProtectedRoute requireCompanyLogin>
                     <SalesForm />
@@ -176,6 +183,11 @@ const App: React.FC = () => (
                 <Route path="/stock-category-master" element={
                   <ProtectedRoute requireCompanyLogin>
                     <StockCategoryMaster />
+                  </ProtectedRoute>
+                } />
+                <Route path="/voucher-types" element={
+                  <ProtectedRoute requireCompanyLogin>
+                    <VoucherTypeMaster />
                   </ProtectedRoute>
                 } />
                 <Route path="/company-profile" element={

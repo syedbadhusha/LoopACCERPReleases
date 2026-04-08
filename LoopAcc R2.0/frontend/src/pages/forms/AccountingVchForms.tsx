@@ -10,7 +10,9 @@ import { ArrowLeft, Plus, Trash2, Printer, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 import BillAllocationDialog from '@/components/BillAllocationDialog';
+import QuickCreateLedgerDialog from '@/components/QuickCreateLedgerDialog';
 import { API_BASE_URL } from '@/config/runtime';
+import type { VoucherTypeMeta } from './VoucherForm';
 
 const API_HOST_URL = API_BASE_URL.replace(/\/api$/, '');
 
@@ -20,14 +22,20 @@ interface BillAllocation {
   allocated_amount: number;
 }
 
-interface PaymentLedgerEntry {
+interface AccountingLedgerEntry {
   id: string;
   ledger_id: string;
   amount: number;
   billAllocations: BillAllocation[];
 }
 
-const PaymentForm = () => {
+interface AccountingFormProps {
+  voucherType?: 'payment' | 'receipt';
+  voucherTypeMeta?: VoucherTypeMeta;
+}
+
+const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: AccountingFormProps) => {
+  const isPayment = voucherType !== 'receipt';
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = location.state?.returnTo;
@@ -36,7 +44,7 @@ const PaymentForm = () => {
   const [loading, setLoading] = useState(false);
   const [ledgers, setLedgers] = useState<any[]>([]);
   const [savedVoucher, setSavedVoucher] = useState<any>(null);
-  
+
   const [formData, setFormData] = useState({
     cash_bank_ledger_id: '',
     voucher_number: '',
@@ -45,8 +53,13 @@ const PaymentForm = () => {
     reference_date: '',
     narration: ''
   });
-  const currencySymbol = selectedCompany?.currency === 'INR' ? '₹' : selectedCompany?.currency === 'USD' ? '$' : selectedCompany?.currency || '₹';
-  const [ledgerEntries, setLedgerEntries] = useState<PaymentLedgerEntry[]>([{
+
+  const currencySymbol =
+    selectedCompany?.currency === 'INR' ? '₹' :
+    selectedCompany?.currency === 'USD' ? '$' :
+    selectedCompany?.currency || '₹';
+
+  const [ledgerEntries, setLedgerEntries] = useState<AccountingLedgerEntry[]>([{
     id: '1',
     ledger_id: '',
     amount: 0,
@@ -54,7 +67,9 @@ const PaymentForm = () => {
   }]);
 
   const [billDialogOpen, setBillDialogOpen] = useState(false);
-  const [selectedEntryForBills, setSelectedEntryForBills] = useState<PaymentLedgerEntry | null>(null);
+  const [selectedEntryForBills, setSelectedEntryForBills] = useState<AccountingLedgerEntry | null>(null);
+  const [quickCreateLedgerOpen, setQuickCreateLedgerOpen] = useState(false);
+  const [quickCreateLedgerDefaultGroup, setQuickCreateLedgerDefaultGroup] = useState<string | undefined>(undefined);
 
   const parseApiResponse = async (response: Response) => {
     const rawText = await response.text();
@@ -88,14 +103,18 @@ const PaymentForm = () => {
         return;
       }
       const voucher = json.data;
-
-      // Build ledger entries from details and ledger-level billallocation.
-      // Payment edit shape contains both the cash/bank credit line and party debit lines in details.
       const details = Array.isArray(voucher.details) ? voucher.details : [];
-      const cashDetail = details.find((detail: any) => Number(detail.credit_amount || 0) > 0);
-      const partyDetails = details.filter((detail: any) => Number(detail.debit_amount || 0) > 0);
 
-      const entries: PaymentLedgerEntry[] = partyDetails.map((detail: any, index: number) => {
+      // Payment: cash/bank is credited, party is debited
+      // Receipt: cash/bank is debited, party is credited
+      const cashDetail = isPayment
+        ? details.find((d: any) => Number(d.credit_amount || 0) > 0)
+        : details.find((d: any) => Number(d.debit_amount || 0) > 0);
+      const partyDetails = isPayment
+        ? details.filter((d: any) => Number(d.debit_amount || 0) > 0)
+        : details.filter((d: any) => Number(d.credit_amount || 0) > 0);
+
+      const entries: AccountingLedgerEntry[] = partyDetails.map((detail: any, index: number) => {
         const entryAllocations = (Array.isArray(detail.billallocation) ? detail.billallocation : [])
           .map((a: any) => ({
             invoice_voucher_id: a.invoice_voucher_id || a.bill_id || a.id,
@@ -132,35 +151,48 @@ const PaymentForm = () => {
   const generateVoucherNumber = async () => {
     if (!selectedCompany) return;
     try {
-      const keys = encodeURIComponent('payment_prefix,payment_starting_number');
-      const settingsResp = await fetch(`http://localhost:5000/api/settings?companyId=${selectedCompany.id}&keys=${keys}`);
-      const settingsJson = await settingsResp.json();
-      let prefix = 'PAY';
+      const defaultPrefix = isPayment ? 'PAY' : 'REC';
+      const settingPrefix = isPayment ? 'payment_prefix' : 'receipt_prefix';
+      const settingNumber = isPayment ? 'payment_starting_number' : 'receipt_starting_number';
+
+      let prefix = defaultPrefix;
+      let suffix = '';
       let startingNumber = 1;
-      if (settingsJson && settingsJson.success) {
-        const settingsData = settingsJson.data || [];
-        const prefixSetting = settingsData.find((s: any) => s.setting_key === 'payment_prefix');
-        const numberSetting = settingsData.find((s: any) => s.setting_key === 'payment_starting_number');
-        if (prefixSetting) prefix = String(prefixSetting.setting_value || 'PAY');
-        if (numberSetting) startingNumber = parseInt(String(numberSetting.setting_value || '1'));
+
+      if (voucherTypeMeta) {
+        prefix = voucherTypeMeta.prefix;
+        suffix = voucherTypeMeta.suffix || '';
+        startingNumber = voucherTypeMeta.starting_number || 1;
+      } else {
+        const keys = encodeURIComponent(`${settingPrefix},${settingNumber}`);
+        const settingsResp = await fetch(`${API_HOST_URL}/api/settings?companyId=${selectedCompany.id}&keys=${keys}`);
+        const settingsJson = await settingsResp.json();
+        if (settingsJson?.success) {
+          const settingsData = settingsJson.data || [];
+          const prefixSetting = settingsData.find((s: any) => s.setting_key === settingPrefix);
+          const numberSetting = settingsData.find((s: any) => s.setting_key === settingNumber);
+          if (prefixSetting) prefix = String(prefixSetting.setting_value || defaultPrefix);
+          if (numberSetting) startingNumber = parseInt(String(numberSetting.setting_value || '1'));
+        }
       }
 
-      // Fetch last voucher of type payment
-      const vouchersResp = await fetch(`http://localhost:5000/api/vouchers?companyId=${selectedCompany.id}`);
+      const vouchersResp = await fetch(`${API_HOST_URL}/api/vouchers?companyId=${selectedCompany.id}`);
       const vouchersJson = await vouchersResp.json();
       let nextNumber = startingNumber;
-      if (vouchersJson && vouchersJson.success) {
-        const paymentVouchers = (vouchersJson.data || []).filter((v: any) => v.voucher_type === 'payment');
-        paymentVouchers.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        if (paymentVouchers.length > 0) {
-          const lastVoucher = paymentVouchers[0];
-          const lastNumber = String(lastVoucher.voucher_number || '').replace(prefix, '');
-          const parsed = parseInt(lastNumber) || startingNumber;
+      if (vouchersJson?.success) {
+        const filtered = (vouchersJson.data || []).filter((v: any) => v.voucher_type === voucherType);
+        filtered.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        if (filtered.length > 0) {
+          const lastVoucher = filtered[0];
+          let stripped = String(lastVoucher.voucher_number || '');
+          if (prefix && stripped.startsWith(prefix)) stripped = stripped.slice(prefix.length);
+          if (suffix && stripped.endsWith(suffix)) stripped = stripped.slice(0, stripped.length - suffix.length);
+          const parsed = parseInt(stripped) || startingNumber;
           nextNumber = parsed + 1;
         }
       }
 
-      setFormData(prev => ({ ...prev, voucher_number: `${prefix}${nextNumber.toString().padStart(4, '0')}` }));
+      setFormData(prev => ({ ...prev, voucher_number: `${prefix}${nextNumber.toString().padStart(4, '0')}${suffix}` }));
     } catch (error) {
       console.error('Error generating voucher number:', error);
     }
@@ -169,17 +201,13 @@ const PaymentForm = () => {
   const fetchInitialData = async () => {
     if (!selectedCompany) return;
     try {
-      const ledgersRes = await fetch(`http://localhost:5000/api/ledgers?companyId=${selectedCompany.id}`);
-      
+      const ledgersRes = await fetch(`${API_HOST_URL}/api/ledgers?companyId=${selectedCompany.id}`);
       const ledgersJson = await ledgersRes.json();
-
-      if (ledgersJson && ledgersJson.success) {
-        // Backend already provides ledger_groups via aggregation
-        const ledgersWithGroupNames = (ledgersJson.data || []).map((ledger: any) => ({
+      if (ledgersJson?.success) {
+        setLedgers((ledgersJson.data || []).map((ledger: any) => ({
           ...ledger,
           group_name: ledger.ledger_groups?.name || 'Unknown'
-        }));
-        setLedgers(ledgersWithGroupNames);
+        })));
       }
     } catch (error) {
       console.error('Error fetching ledgers:', error);
@@ -187,37 +215,23 @@ const PaymentForm = () => {
   };
 
   const handleLedgerChange = (entryId: string, ledgerId: string) => {
-    setLedgerEntries(prev => prev.map(entry => 
-      entry.id === entryId 
-        ? { ...entry, ledger_id: ledgerId, billAllocations: [] }
-        : entry
+    setLedgerEntries(prev => prev.map(entry =>
+      entry.id === entryId ? { ...entry, ledger_id: ledgerId, billAllocations: [] } : entry
     ));
   };
 
   const isBillwiseLedger = (ledgerId: string) => {
     const ledger = ledgers.find((l) => l.id === ledgerId);
-    return (
-      ledger?.is_billwise === true ||
-      ledger?.is_billwise === 'yes' ||
-      ledger?.is_billwise === 1
-    );
+    return ledger?.is_billwise === true || ledger?.is_billwise === 'yes' || ledger?.is_billwise === 1;
   };
 
-  const openBillAllocation = (entry: PaymentLedgerEntry) => {
+  const openBillAllocation = (entry: AccountingLedgerEntry) => {
     if (!entry.ledger_id) {
-      toast({
-        title: 'Error',
-        description: 'Please select a ledger first',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: 'Please select a ledger first', variant: 'destructive' });
       return;
     }
     if (!isBillwiseLedger(entry.ledger_id)) {
-      toast({
-        title: 'Error',
-        description: 'Bill-wise is not enabled for selected ledger',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: 'Bill-wise is not enabled for selected ledger', variant: 'destructive' });
       return;
     }
     setSelectedEntryForBills(entry);
@@ -226,9 +240,8 @@ const PaymentForm = () => {
 
   const handleBillAllocationSave = (allocations: BillAllocation[]) => {
     if (!selectedEntryForBills) return;
-    const allocatedTotal = allocations.reduce((sum, allocation) => sum + Number(allocation.allocated_amount || 0), 0);
-    
-    setLedgerEntries(prev => prev.map(entry => 
+    const allocatedTotal = allocations.reduce((sum, a) => sum + Number(a.allocated_amount || 0), 0);
+    setLedgerEntries(prev => prev.map(entry =>
       entry.id === selectedEntryForBills.id
         ? { ...entry, billAllocations: allocations, amount: allocatedTotal }
         : entry
@@ -236,19 +249,14 @@ const PaymentForm = () => {
   };
 
   const handleAmountChange = (entryId: string, amount: number) => {
-    setLedgerEntries(prev => prev.map(entry => 
+    setLedgerEntries(prev => prev.map(entry =>
       entry.id === entryId ? { ...entry, amount } : entry
     ));
   };
 
   const addLedgerEntry = () => {
     const newId = (Math.max(...ledgerEntries.map(e => parseInt(e.id)), 0) + 1).toString();
-    setLedgerEntries([...ledgerEntries, {
-      id: newId,
-      ledger_id: '',
-      amount: 0,
-      billAllocations: []
-    }]);
+    setLedgerEntries([...ledgerEntries, { id: newId, ledger_id: '', amount: 0, billAllocations: [] }]);
   };
 
   const removeLedgerEntry = (entryId: string) => {
@@ -257,21 +265,19 @@ const PaymentForm = () => {
     }
   };
 
+  const getTotalAmount = () => ledgerEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
 
-  const getTotalAmount = () => {
-    return ledgerEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-  };
+  const numberToWords = (num: number): string => `${num.toFixed(2)} Only`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCompany) return;
 
-    // Validation
     if (!formData.cash_bank_ledger_id) {
       toast({
-        title: "Validation Error",
-        description: "Please select Pay From account",
-        variant: "destructive",
+        title: 'Validation Error',
+        description: `Please select ${isPayment ? 'Pay From' : 'Received In'} account`,
+        variant: 'destructive',
       });
       return;
     }
@@ -279,169 +285,113 @@ const PaymentForm = () => {
     const validEntries = ledgerEntries.filter(e => e.ledger_id && e.amount > 0);
     if (validEntries.length === 0) {
       toast({
-        title: "Validation Error",
-        description: "Please add at least one payment entry with ledger and amount",
-        variant: "destructive",
+        title: 'Validation Error',
+        description: `Please add at least one ${isPayment ? 'payment' : 'receipt'} entry with ledger and amount`,
+        variant: 'destructive',
       });
       return;
     }
 
     setLoading(true);
-
     try {
       const totalAmount = getTotalAmount();
       const searchParams = new URLSearchParams(location.search);
       const editVoucherId = searchParams.get('edit');
 
-      let voucher: any = null;
-      // Exclude UI-only field from DB payload and convert empty reference_date to null
       const { cash_bank_ledger_id: _cb, ...voucherForm } = formData;
       const voucherPayload = {
         ...voucherForm,
         reference_date: voucherForm.reference_date || null,
         company_id: selectedCompany.id,
-        voucher_type: 'payment' as const,
+        voucher_type: voucherType as 'payment' | 'receipt',
+        voucher_type_id: voucherTypeMeta?.id || undefined,
         ledger_id: ledgerEntries[0]?.ledger_id || '',
         total_amount: totalAmount,
         tax_amount: 0,
         net_amount: totalAmount
       };
 
-      if (editVoucherId) {
-        // Update via backend endpoint which handles associated details/entries/allocations
-        const resp = await fetch(`${API_HOST_URL}/api/vouchers/${editVoucherId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...voucherPayload,
-            details: ledgerEntries.filter(e => e.ledger_id && e.amount > 0).map(entry => ({
-              ledger_id: entry.ledger_id,
-              amount: entry.amount,
-              billallocation: entry.billAllocations
-                .filter((a) => a.allocated_amount > 0)
-                .map((a) => ({
-                  id: a.invoice_voucher_id,
-                  invoice_voucher_id: a.invoice_voucher_id,
-                  bill_reference: a.voucher_number || '',
-                  bill_type: 'Against Ref',
-                  amount: a.allocated_amount,
-                  bill_date: formData.voucher_date,
-                })),
-            })),
-            ledger_entries: (() => {
-              const all: any[] = [];
-              all.push({
-                company_id: selectedCompany.id,
-                ledger_id: formData.cash_bank_ledger_id,
-                transaction_date: formData.voucher_date,
-                debit_amount: 0,
-                credit_amount: totalAmount,
-                isDeemedPositive: 'no',
-                narration: formData.narration || 'Payment',
-              });
-              ledgerEntries.filter(e => e.ledger_id && e.amount > 0).forEach(entry => {
-                all.push({
-                  company_id: selectedCompany.id,
-                  ledger_id: entry.ledger_id,
-                  transaction_date: formData.voucher_date,
-                  debit_amount: entry.amount,
-                  credit_amount: 0,
-                  isDeemedPositive: 'yes',
-                  narration: formData.narration || `Payment via ${ledgers.find(l => l.id === formData.cash_bank_ledger_id)?.name}`,
-                  billallocation: entry.billAllocations
-                    .filter((a) => a.allocated_amount > 0)
-                    .map((a) => ({
-                      id: a.invoice_voucher_id,
-                      invoice_voucher_id: a.invoice_voucher_id,
-                      bill_reference: a.voucher_number || '',
-                      bill_type: 'Against Ref',
-                      amount: a.allocated_amount,
-                      bill_date: formData.voucher_date,
-                    }))
-                });
-              });
-              return all;
-            })()
-          })
-        });
-        const json = await parseApiResponse(resp);
-        if (!json.success) throw new Error(json.message || 'Update failed');
-        voucher = json.data;
-      } else {
-        // Create via backend endpoint
-        const createResp = await fetch(`${API_HOST_URL}/api/vouchers`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...voucherPayload,
-            details: ledgerEntries.filter(e => e.ledger_id && e.amount > 0).map(entry => ({
-              ledger_id: entry.ledger_id,
-              amount: entry.amount,
-              billallocation: entry.billAllocations
-                .filter((a) => a.allocated_amount > 0)
-                .map((a) => ({
-                  id: a.invoice_voucher_id,
-                  invoice_voucher_id: a.invoice_voucher_id,
-                  bill_reference: a.voucher_number || '',
-                  bill_type: 'Against Ref',
-                  amount: a.allocated_amount,
-                  bill_date: formData.voucher_date,
-                })),
-            })),
-            ledger_entries: (() => {
-              const all: any[] = [];
-              all.push({
-                company_id: selectedCompany.id,
-                ledger_id: formData.cash_bank_ledger_id,
-                transaction_date: formData.voucher_date,
-                debit_amount: 0,
-                credit_amount: totalAmount,
-                isDeemedPositive: 'no',
-                narration: formData.narration || 'Payment',
-              });
-              ledgerEntries.filter(e => e.ledger_id && e.amount > 0).forEach(entry => {
-                all.push({
-                  company_id: selectedCompany.id,
-                  ledger_id: entry.ledger_id,
-                  transaction_date: formData.voucher_date,
-                  debit_amount: entry.amount,
-                  credit_amount: 0,
-                  isDeemedPositive: 'yes',
-                  narration: formData.narration || `Payment via ${ledgers.find(l => l.id === formData.cash_bank_ledger_id)?.name}`,
-                  billallocation: entry.billAllocations
-                    .filter((a) => a.allocated_amount > 0)
-                    .map((a) => ({
-                      id: a.invoice_voucher_id,
-                      invoice_voucher_id: a.invoice_voucher_id,
-                      bill_reference: a.voucher_number || '',
-                      bill_type: 'Against Ref',
-                      amount: a.allocated_amount,
-                      bill_date: formData.voucher_date,
-                    }))
-                });
-              });
-              return all;
-            })()
-          })
-        });
-        const createJson = await parseApiResponse(createResp);
-        if (!createJson.success) throw new Error(createJson.message || 'Create failed');
-        voucher = createJson.data;
-      }
+      const voucherDetails = ledgerEntries.filter(e => e.ledger_id && e.amount > 0).map(entry => ({
+        ledger_id: entry.ledger_id,
+        amount: entry.amount,
+        billallocation: entry.billAllocations.filter(a => a.allocated_amount > 0).map(a => ({
+          id: a.invoice_voucher_id,
+          invoice_voucher_id: a.invoice_voucher_id,
+          bill_reference: a.voucher_number || '',
+          bill_type: 'Against Ref',
+          amount: a.allocated_amount,
+          bill_date: formData.voucher_date,
+        })),
+      }));
 
-      setSavedVoucher(voucher);
+      // Build ledger entries: cash/bank side and party side (directions reversed by isPayment)
+      const allLedgerEntries: any[] = [];
 
-      toast({
-        title: "Success",
-        description: editVoucherId ? "Payment entry updated successfully!" : "Payment entry created successfully!"
+      // Cash/Bank account
+      allLedgerEntries.push({
+        ledger_id: formData.cash_bank_ledger_id,
+        transaction_date: formData.voucher_date,
+        debit_amount: isPayment ? 0 : totalAmount,
+        credit_amount: isPayment ? totalAmount : 0,
+        isDeemedPositive: isPayment ? 'no' : 'yes',
+        narration: formData.narration || (isPayment ? 'Payment' : 'Receipt')
       });
 
-      // Auto-print after save - pass voucher directly to avoid state timing issues
-      setTimeout(() => {
-        handlePrint(voucher);
-      }, 500);
+      // Party accounts
+      ledgerEntries.filter(e => e.ledger_id && e.amount > 0).forEach(entry => {
+        allLedgerEntries.push({
+          ledger_id: entry.ledger_id,
+          transaction_date: formData.voucher_date,
+          debit_amount: isPayment ? entry.amount : 0,
+          credit_amount: isPayment ? 0 : entry.amount,
+          isDeemedPositive: isPayment ? 'yes' : 'no',
+          narration: formData.narration || `${isPayment ? 'Payment' : 'Receipt'} via ${ledgers.find(l => l.id === formData.cash_bank_ledger_id)?.name || ''}`,
+          billallocation: entry.billAllocations.filter(a => a.allocated_amount > 0).map(a => ({
+            id: a.invoice_voucher_id,
+            invoice_voucher_id: a.invoice_voucher_id,
+            bill_reference: a.voucher_number || '',
+            bill_type: 'Against Ref',
+            amount: a.allocated_amount,
+            bill_date: formData.voucher_date,
+          }))
+        });
+      });
 
-      // After save: if opened from a report, go back; if editing, go back; else reset to add another
+      const fullPayload = {
+        ...voucherPayload,
+        details: voucherDetails,
+        ledger_entries: allLedgerEntries
+      };
+
+      let resp;
+      if (editVoucherId) {
+        resp = await fetch(`${API_HOST_URL}/api/vouchers/${editVoucherId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fullPayload)
+        });
+      } else {
+        resp = await fetch(`${API_HOST_URL}/api/vouchers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fullPayload)
+        });
+      }
+
+      const respJson = await parseApiResponse(resp);
+      if (!respJson?.success) throw new Error(respJson?.message || 'Failed to save voucher');
+      const voucher = respJson.data;
+
+      setSavedVoucher(voucher);
+      toast({
+        title: 'Success',
+        description: editVoucherId
+          ? `${isPayment ? 'Payment' : 'Receipt'} updated successfully!`
+          : `${isPayment ? 'Payment' : 'Receipt'} created successfully!`
+      });
+
+      setTimeout(() => handlePrint(voucher), 500);
+
       if (returnTo) {
         navigate(returnTo);
       } else if (editVoucherId) {
@@ -455,20 +405,15 @@ const PaymentForm = () => {
           reference_date: '',
           narration: ''
         });
-        setLedgerEntries([{
-          id: '1',
-          ledger_id: '',
-          amount: 0,
-          billAllocations: []
-        }]);
+        setLedgerEntries([{ id: '1', ledger_id: '', amount: 0, billAllocations: [] }]);
         await generateVoucherNumber();
       }
     } catch (error) {
-      console.error('Error creating payment:', error);
+      console.error('Error saving:', error);
       toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to create payment entry",
-        variant: "destructive"
+        title: 'Error',
+        description: error instanceof Error ? error.message : `Failed to save ${isPayment ? 'payment' : 'receipt'}`,
+        variant: 'destructive'
       });
     } finally {
       setLoading(false);
@@ -478,23 +423,21 @@ const PaymentForm = () => {
   const handlePrint = (voucherData?: any) => {
     const voucher = voucherData || savedVoucher;
     if (!voucher) {
-      toast({
-        title: "Error", 
-        description: "Please save the payment first",
-        variant: "destructive"
-      });
+      toast({ title: 'Error', description: 'Please save the voucher first', variant: 'destructive' });
       return;
     }
-    
+
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
     const totalNet = getTotalAmount();
+    const title = isPayment ? 'PAYMENT VOUCHER' : 'RECEIPT VOUCHER';
+    const cashBankName = ledgers.find(l => l.id === formData.cash_bank_ledger_id)?.name || '';
 
     printWindow.document.write(`
       <html>
         <head>
-          <title>Payment Voucher - ${voucher.voucher_number}</title>
+          <title>${isPayment ? 'Payment' : 'Receipt'} Voucher - ${voucher.voucher_number}</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
             .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
@@ -506,59 +449,73 @@ const PaymentForm = () => {
         <body>
           <div class="header">
             <h1>${selectedCompany?.name}</h1>
-            <h2>PAYMENT VOUCHER</h2>
+            <h2>${title}</h2>
           </div>
           <div class="details">
             <p><strong>Voucher No:</strong> ${voucher.voucher_number}</p>
             <p><strong>Date:</strong> ${voucher.voucher_date}</p>
-            <p><strong>Paid From:</strong> ${ledgers.find(l => l.id === formData.cash_bank_ledger_id)?.name}</p>
-            ${ledgerEntries.map(e => `<p><strong>Paid To:</strong> ${ledgers.find(l => l.id === e.ledger_id)?.name} - ${currencySymbol} ${e.amount.toFixed(2)}</p>`).join('')}
-            <p><strong>Narration:</strong> ${voucher.narration || 'Payment Entry'}</p>
+            <p><strong>${isPayment ? 'Pay From' : 'Received In'}:</strong> ${cashBankName}</p>
+            ${ledgerEntries.map(e => `<p><strong>${isPayment ? 'Paid To' : 'Received From'}:</strong> ${ledgers.find(l => l.id === e.ledger_id)?.name || ''} - ${currencySymbol} ${e.amount.toFixed(2)}</p>`).join('')}
+            <p><strong>Narration:</strong> ${voucher.narration || (isPayment ? 'Payment Entry' : 'Receipt Entry')}</p>
           </div>
           <div class="amount-box">
-            <h3>Amount Paid: ${currencySymbol} ${totalNet.toFixed(2)}</h3>
+            <h3>Amount ${isPayment ? 'Paid' : 'Received'}: ${currencySymbol} ${totalNet.toFixed(2)}</h3>
             <p>Amount in Words: ${numberToWords(totalNet)}</p>
           </div>
           <div class="signature">
             <div>Prepared By: _______________</div>
             <div>Approved By: _______________</div>
-            <div>Received By: _______________</div>
+            <div>${isPayment ? 'Paid By' : 'Received By'}: _______________</div>
           </div>
         </body>
       </html>
     `);
-    
+
     printWindow.document.close();
     printWindow.print();
   };
 
-  const numberToWords = (num: number): string => {
-    // Basic number to words conversion - you can enhance this
-    return `${num.toFixed(2)} Only`;
+  const handleLedgerCreated = (ledger: { id: string; name: string; group_name: string; tax_type?: string }) => {
+    const newEntry = { ...ledger, tax_type: ledger.tax_type || '', ledger_groups: { name: ledger.group_name } };
+    setLedgers(prev => [...prev, newEntry]);
   };
 
+  const voucherTitle = isPayment ? 'Payment Entry' : 'Receipt Entry';
+  const cardTitle = isPayment ? 'Payment Details' : 'Receipt Details';
+  const cashBankLabel = isPayment ? 'Pay From' : 'Receive Into';
+  const partyLabel = isPayment ? 'Payment To (Ledgers)' : 'Receipt From (Ledgers)';
+  const partyRowLabel = isPayment ? 'Paid To' : 'Received From';
+  const totalLabel = isPayment ? 'Total Payment Amount:' : 'Total Receipt Amount:';
+
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="bg-background h-full flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
-            <Button variant="ghost" onClick={() => { if (window.history.length > 1) { navigate(-1); } else { navigate('/dashboard'); } }} className="mr-4">
+            <Button
+              variant="ghost"
+              onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/dashboard'); }}
+              className="mr-4"
+            >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <h1 className="text-2xl font-bold">Payment Entry</h1>
+            <h1 className="text-2xl font-bold">{voucherTitle}</h1>
           </div>
           {savedVoucher && (
-            <Button onClick={handlePrint} variant="outline">
+            <Button onClick={() => handlePrint()} variant="outline">
               <Printer className="h-4 w-4 mr-2" />
               Print Voucher
             </Button>
           )}
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-4xl mx-auto p-6">
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Payment Details</CardTitle>
+              <CardTitle>{cardTitle}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -566,9 +523,9 @@ const PaymentForm = () => {
                   <Label>Company</Label>
                   <Input value={selectedCompany?.name || ''} readOnly className="bg-muted" />
                 </div>
-                
+
                 <div>
-                  <Label>Pay From</Label>
+                  <Label>{cashBankLabel}</Label>
                   <div className="flex gap-2">
                     <SearchableDropdown
                       value={formData.cash_bank_ledger_id}
@@ -579,65 +536,61 @@ const PaymentForm = () => {
                         label: `${ledger.name} (${ledger.ledger_groups?.name})`,
                       }))}
                     />
-                    <Button type="button" variant="outline" size="sm" onClick={() => {
-                      const returnPath = window.location.pathname + window.location.search;
-                      navigate('/ledger-master', { 
-                        state: { 
-                          returnTo: returnPath,
-                          action: 'create',
-                          type: 'ledger' 
-                        } 
-                      });
-                    }}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { setQuickCreateLedgerDefaultGroup(undefined); setQuickCreateLedgerOpen(true); }}
+                    >
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
-                
+
                 <div>
                   <Label>Voucher Number</Label>
-                  <Input 
+                  <Input
                     value={formData.voucher_number}
-                    onChange={(e) => setFormData({...formData, voucher_number: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, voucher_number: e.target.value })}
                     placeholder="Enter voucher number"
                     required
                   />
                 </div>
-                
+
                 <div>
-                  <Label>Payment Date</Label>
-                  <Input 
+                  <Label>{isPayment ? 'Payment Date' : 'Receipt Date'}</Label>
+                  <Input
                     type="date"
                     value={formData.voucher_date}
-                    onChange={(e) => setFormData({...formData, voucher_date: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, voucher_date: e.target.value })}
                     required
                   />
                 </div>
-                
+
                 <div>
                   <Label>Reference Number</Label>
-                  <Input 
+                  <Input
                     value={formData.reference_number}
-                    onChange={(e) => setFormData({...formData, reference_number: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
                     placeholder="Enter reference number"
                   />
                 </div>
-                
+
                 <div>
                   <Label>Reference Date</Label>
-                  <Input 
+                  <Input
                     type="date"
                     value={formData.reference_date}
-                    onChange={(e) => setFormData({...formData, reference_date: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, reference_date: e.target.value })}
                   />
                 </div>
               </div>
-              
+
               <div>
                 <Label>Narration</Label>
-                <Textarea 
+                <Textarea
                   value={formData.narration}
-                  onChange={(e) => setFormData({...formData, narration: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, narration: e.target.value })}
                   placeholder="Enter description"
                   rows={4}
                 />
@@ -648,18 +601,18 @@ const PaymentForm = () => {
           {/* Ledger Entries Section */}
           <Card>
             <CardHeader>
-              <CardTitle>Payment To (Ledgers)</CardTitle>
+              <CardTitle>{partyLabel}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {ledgerEntries.map((entry, index) => (
+              {ledgerEntries.map((entry) => (
                 <div key={entry.id} className="space-y-4 p-4 border rounded">
                   <div className="flex items-start gap-4">
                     <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <Label>Ledger</Label>
+                        <Label>{partyRowLabel}</Label>
                         <div className="flex gap-2">
                           <SearchableDropdown
-                            value={entry.ledger_id} 
+                            value={entry.ledger_id}
                             onValueChange={(value) => handleLedgerChange(entry.id, value)}
                             placeholder="Select Ledger"
                             options={ledgers.map((ledger) => ({
@@ -667,16 +620,12 @@ const PaymentForm = () => {
                               label: `${ledger.name} (${ledger.ledger_groups?.name})`,
                             }))}
                           />
-                          <Button type="button" variant="outline" size="sm" onClick={() => {
-                            const returnPath = window.location.pathname + window.location.search;
-                            navigate('/ledger-master', { 
-                              state: { 
-                                returnTo: returnPath,
-                                action: 'create',
-                                type: 'ledger' 
-                              } 
-                            });
-                          }}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => { setQuickCreateLedgerDefaultGroup(undefined); setQuickCreateLedgerOpen(true); }}
+                          >
                             <Plus className="h-4 w-4" />
                           </Button>
                         </div>
@@ -705,7 +654,6 @@ const PaymentForm = () => {
                     </Button>
                   </div>
 
-                  {/* Bill Allocation Button and Summary */}
                   <div className="mt-4 space-y-2">
                     <Button
                       type="button"
@@ -725,7 +673,7 @@ const PaymentForm = () => {
                   </div>
                 </div>
               ))}
-              
+
               <Button type="button" onClick={addLedgerEntry} variant="outline" className="w-full">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Another Ledger
@@ -733,7 +681,7 @@ const PaymentForm = () => {
 
               <div className="pt-4 border-t">
                 <div className="flex justify-between items-center">
-                  <Label className="text-lg">Total Payment Amount:</Label>
+                  <Label className="text-lg">{totalLabel}</Label>
                   <span className="text-lg font-bold">{currencySymbol} {getTotalAmount().toFixed(2)}</span>
                 </div>
               </div>
@@ -744,31 +692,38 @@ const PaymentForm = () => {
             <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || !formData.cash_bank_ledger_id || ledgerEntries.every(e => !e.ledger_id || e.amount === 0)}>
-              {loading ? 'Saving...' : 'Save Payment'}
+            <Button
+              type="submit"
+              disabled={loading || !formData.cash_bank_ledger_id || ledgerEntries.every(e => !e.ledger_id || e.amount === 0)}
+            >
+              {loading ? 'Saving...' : `Save ${isPayment ? 'Payment' : 'Receipt'}`}
             </Button>
           </div>
         </form>
 
-        {/* Bill Allocation Dialog */}
         {selectedEntryForBills && (
           <BillAllocationDialog
             open={billDialogOpen}
-            onClose={() => {
-              setBillDialogOpen(false);
-              setSelectedEntryForBills(null);
-            }}
+            onClose={() => { setBillDialogOpen(false); setSelectedEntryForBills(null); }}
             ledgerId={selectedEntryForBills.ledger_id}
             ledgerName={ledgers.find(l => l.id === selectedEntryForBills.ledger_id)?.name || ''}
             maxAmount={selectedEntryForBills.amount}
-            voucherType="payment"
+            voucherType={voucherType}
             existingAllocations={selectedEntryForBills.billAllocations}
             onSave={handleBillAllocationSave}
           />
         )}
+
+        <QuickCreateLedgerDialog
+          open={quickCreateLedgerOpen}
+          onClose={() => setQuickCreateLedgerOpen(false)}
+          onCreated={handleLedgerCreated}
+          defaultGroupName={quickCreateLedgerDefaultGroup}
+        />
+        </div>
       </div>
     </div>
   );
 };
 
-export default PaymentForm;
+export default AccountingForm;

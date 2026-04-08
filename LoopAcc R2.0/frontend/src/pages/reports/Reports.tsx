@@ -88,14 +88,17 @@ const Reports = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center mb-6">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center">
           <Button variant="ghost" onClick={() => { if (window.history.length > 1) { navigate(-1); } else { navigate('/dashboard'); } }} className="mr-4">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-2xl font-bold">Financial Reports</h1>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto p-6">
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="md:col-span-1">
@@ -158,6 +161,7 @@ const Reports = () => {
               ))}
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import { getDb, initializeDatabase } from "../db.js";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import { replaceDefaultGroupsForCompany } from "./groupService.js";
+import { createDefaultVoucherTypesForCompany } from "./voucherTypeService.js";
 
 /**
  * Default company settings
@@ -9,14 +10,6 @@ import { replaceDefaultGroupsForCompany } from "./groupService.js";
 const DEFAULT_SETTINGS = {
   auto_backup: "true",
   backup_frequency: "daily",
-  invoice_prefix: "INV",
-  invoice_starting_number: "1",
-  bill_prefix: "BILL",
-  bill_starting_number: "1",
-  payment_prefix: "PAY",
-  payment_starting_number: "1",
-  receipt_prefix: "REC",
-  receipt_starting_number: "1",
   decimal_places: "2",
   date_format: "dd/mm/yyyy",
   gst_applicable: "true",
@@ -86,6 +79,9 @@ export async function createCompanyService(companyData, userId) {
 
     // Create default ledger groups
     await replaceDefaultGroupsForCompany(companyId);
+
+    // Create default voucher types with numbering settings
+    await createDefaultVoucherTypesForCompany(companyId, DEFAULT_SETTINGS);
 
     return {
       success: true,

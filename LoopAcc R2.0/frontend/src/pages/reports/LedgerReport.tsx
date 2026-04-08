@@ -186,9 +186,9 @@ const LedgerReport = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="bg-background h-screen flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 bg-background border-b shadow-sm">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <Button variant="ghost" onClick={handleBack} className="mr-4">
               <ArrowLeft className="h-4 w-4" />
@@ -206,6 +206,9 @@ const LedgerReport = () => {
             </Button>
           </div>
         </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto p-6">
 
         <Card className="mb-6">
           <CardContent className="pt-4">
@@ -352,6 +355,7 @@ const LedgerReport = () => {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ dotenv.config();
 
 const mongoUri = process.env.MONGODB_URI;
 const mongoDbName = process.env.MONGODB_DB_NAME || "tally_clone";
+const authDbName = process.env.AUTH_DB_NAME || "loopacc_auth";
 const mongoDirectUri = process.env.MONGODB_DIRECT_URI;
 const mongoFallbackUri =
   process.env.MONGODB_FALLBACK_URI ||
@@ -20,6 +21,7 @@ const allowLocalFallback =
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const localDbFilePath = path.join(__dirname, ".localdb.json");
+const localAuthDbFilePath = path.join(__dirname, ".localauth.json");
 
 if (!mongoUri) {
   throw new Error("Missing MONGODB_URI in environment (.env)");
@@ -27,15 +29,16 @@ if (!mongoUri) {
 
 let client;
 let db;
+let authDb;
 let connectPromise;
 
-function readLocalStore() {
+function readLocalStore(filePath = localDbFilePath) {
   try {
-    if (!fs.existsSync(localDbFilePath)) {
+    if (!fs.existsSync(filePath)) {
       return {};
     }
 
-    const raw = fs.readFileSync(localDbFilePath, "utf-8");
+    const raw = fs.readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw || "{}");
     return typeof parsed === "object" && parsed !== null ? parsed : {};
   } catch (error) {
@@ -44,9 +47,9 @@ function readLocalStore() {
   }
 }
 
-function writeLocalStore(store) {
+function writeLocalStore(store, filePath = localDbFilePath) {
   try {
-    fs.writeFileSync(localDbFilePath, JSON.stringify(store, null, 2), "utf-8");
+    fs.writeFileSync(filePath, JSON.stringify(store, null, 2), "utf-8");
   } catch (error) {
     console.warn(`Failed to write local DB file: ${error.message}`);
   }
@@ -96,13 +99,13 @@ function matchesQuery(doc, query = {}) {
   return true;
 }
 
-function createLocalDb() {
-  const store = readLocalStore();
+function createLocalDb(filePath = localDbFilePath) {
+  const store = readLocalStore(filePath);
 
   function ensureCollection(name) {
     if (!Array.isArray(store[name])) {
       store[name] = [];
-      writeLocalStore(store);
+      writeLocalStore(store, filePath);
     }
     return store[name];
   }
@@ -122,7 +125,7 @@ function createLocalDb() {
     async dropCollection(name) {
       if (store[name]) {
         delete store[name];
-        writeLocalStore(store);
+        writeLocalStore(store, filePath);
       }
       return true;
     },
@@ -151,7 +154,7 @@ function createLocalDb() {
             _id: document._id || `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
           };
           items.push(doc);
-          writeLocalStore(store);
+          writeLocalStore(store, filePath);
           return { acknowledged: true, insertedId: doc._id };
         },
         async updateOne(filter, update, options = {}) {
@@ -161,7 +164,7 @@ function createLocalDb() {
 
           if (index >= 0) {
             items[index] = { ...items[index], ...setValues };
-            writeLocalStore(store);
+            writeLocalStore(store, filePath);
             return {
               acknowledged: true,
               matchedCount: 1,
@@ -177,7 +180,7 @@ function createLocalDb() {
               _id: `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
             };
             items.push(upsertDoc);
-            writeLocalStore(store);
+            writeLocalStore(store, filePath);
             return {
               acknowledged: true,
               matchedCount: 0,
@@ -230,7 +233,8 @@ async function connectWithUri(uri, label) {
   await nextClient.connect();
   client = nextClient;
   db = client.db(mongoDbName);
-  console.log(`✓ Connected to MongoDB (${label}): ${mongoDbName}`);
+  authDb = client.db(authDbName);
+  console.log(`✓ Connected to MongoDB (${label}): ${mongoDbName} | auth: ${authDbName}`);
   return db;
 }
 
@@ -289,6 +293,7 @@ export async function connectToMongo() {
       if (!canTryFallback) {
         if (allowLocalFallback) {
           db = createLocalDb();
+          authDb = createLocalDb(localAuthDbFilePath);
           console.warn(
             `MongoDB unavailable (${primaryError.message}). Using local file DB fallback at ${localDbFilePath}`,
           );
@@ -306,6 +311,7 @@ export async function connectToMongo() {
       } catch (fallbackError) {
         if (allowLocalFallback) {
           db = createLocalDb();
+          authDb = createLocalDb(localAuthDbFilePath);
           console.warn(
             `MongoDB fallback unavailable (${fallbackError.message}). Using local file DB fallback at ${localDbFilePath}`,
           );
@@ -607,7 +613,6 @@ export async function initializeDatabase() {
 
     // Ensure collections exist (Mongo creates on first insert, but we create here for clarity)
     const required = [
-      "users",
       "companies",
       "company_users",
       "groups",
@@ -633,9 +638,6 @@ export async function initializeDatabase() {
     await migrateItemMasterStockValueModel(database);
 
     // Create indexes
-    await database
-      .collection("users")
-      .createIndex({ email: 1 }, { unique: true });
     await database
       .collection("groups")
       .createIndex({ company_id: 1, name: 1 }, { unique: true });
@@ -673,6 +675,38 @@ export function getDb() {
   if (!db)
     throw new Error("MongoDB not connected. Call connectToMongo() first.");
   return db;
+}
+
+export function getUserDb() {
+  if (!authDb)
+    throw new Error("MongoDB not connected. Call connectToMongo() first.");
+  return authDb;
+}
+
+export async function initializeAuthDatabase() {
+  try {
+    const userDatabase = getUserDb();
+    console.log("Checking/initializing Auth database collections...");
+
+    const existing = await userDatabase
+      .listCollections({}, { nameOnly: true })
+      .toArray();
+    const names = existing.map((c) => c.name);
+
+    if (!names.includes("users")) {
+      await userDatabase.createCollection("users");
+      console.log("Created collection: users");
+    }
+
+    await userDatabase
+      .collection("users")
+      .createIndex({ email: 1 }, { unique: true });
+
+    console.log("✓ Auth database (users) collection and indexes are ready");
+  } catch (err) {
+    console.error("Auth database initialization error:", err.message || err);
+    throw err;
+  }
 }
 
 export async function closeMongo() {
