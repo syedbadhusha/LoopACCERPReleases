@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { CompanyProvider } from "./contexts/CompanyContext";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -15,12 +15,6 @@ const CreateCompany = lazy(() => import("./pages/CreateCompany"));
 const CompanyLogin = lazy(() => import("./pages/CompanyLogin"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
-const SalesForm = lazy(() => import("./pages/forms/SalesForm"));
-const CreditNoteForm = lazy(() => import("./pages/forms/CreditNoteForm"));
-const PurchaseForm = lazy(() => import("./pages/forms/PurchaseForm"));
-const DebitNoteForm = lazy(() => import("./pages/forms/DebitNoteForm"));
-const PaymentForm = lazy(() => import("./pages/forms/PaymentForm"));
-const ReceiptForm = lazy(() => import("./pages/forms/ReceiptForm"));
 const VoucherForm = lazy(() => import("./pages/forms/VoucherForm"));
 const LedgerMaster = lazy(() => import("./pages/masters/LedgerMaster"));
 const ItemMaster = lazy(() => import("./pages/masters/ItemMaster"));
@@ -125,36 +119,12 @@ const App: React.FC = () => (
                     <VoucherForm />
                   </ProtectedRoute>
                 } />
-                <Route path="/sales" element={
-                  <ProtectedRoute requireCompanyLogin>
-                    <SalesForm />
-                  </ProtectedRoute>
-                } />
-                <Route path="/credit-note" element={
-                  <ProtectedRoute requireCompanyLogin>
-                    <CreditNoteForm />
-                  </ProtectedRoute>
-                } />
-                <Route path="/purchase" element={
-                  <ProtectedRoute requireCompanyLogin>
-                    <PurchaseForm />
-                  </ProtectedRoute>
-                } />
-                <Route path="/debit-note" element={
-                  <ProtectedRoute requireCompanyLogin>
-                    <DebitNoteForm />
-                  </ProtectedRoute>
-                } />
-                <Route path="/payment" element={
-                  <ProtectedRoute requireCompanyLogin>
-                    <PaymentForm />
-                  </ProtectedRoute>
-                } />
-                <Route path="/receipt" element={
-                  <ProtectedRoute requireCompanyLogin>
-                    <ReceiptForm />
-                  </ProtectedRoute>
-                } />
+                <Route path="/sales" element={<Navigate to="/vouchers" replace />} />
+                <Route path="/credit-note" element={<Navigate to="/vouchers" replace />} />
+                <Route path="/purchase" element={<Navigate to="/vouchers" replace />} />
+                <Route path="/debit-note" element={<Navigate to="/vouchers" replace />} />
+                <Route path="/payment" element={<Navigate to="/vouchers" replace />} />
+                <Route path="/receipt" element={<Navigate to="/vouchers" replace />} />
                 <Route path="/groups" element={
                   <ProtectedRoute requireCompanyLogin>
                     <GroupMaster />
