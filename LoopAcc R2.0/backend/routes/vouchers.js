@@ -41,7 +41,7 @@ router.get("/report/held-pos", async (req, res) => {
 // MUST be before /:id route to prevent /:id catching "report"
 router.get("/report/history", async (req, res) => {
   try {
-    const { companyId, dateFrom, dateTo, voucherType } = req.query;
+    const { companyId, dateFrom, dateTo, voucherType, voucherTypeId } = req.query;
     if (!companyId || !dateFrom || !dateTo) {
       return res.status(400).json({
         success: false,
@@ -53,6 +53,7 @@ router.get("/report/history", async (req, res) => {
       dateFrom,
       dateTo,
       voucherType,
+      voucherTypeId,
     );
     res.json({ success: true, data });
   } catch (error) {

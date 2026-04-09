@@ -16,6 +16,7 @@ type GroupVoucherRow = {
   date: string;
   particulars: string;
   voucherType: string;
+  voucherTypeName: string;
   voucherNumber: string;
   debit: number;
   credit: number;
@@ -96,7 +97,10 @@ const GroupVouchersReport = () => {
       const json = await resp.json();
       setGroupInfo(json?.data?.group || null);
       setOpeningBalance(Number(json?.data?.opening || 0));
-      setReportData(Array.isArray(json?.data?.transactions) ? json.data.transactions : []);
+      setReportData(Array.isArray(json?.data?.transactions) ? json.data.transactions.map((t: any) => ({
+        ...t,
+        voucherTypeName: t.voucherTypeName || t.voucherType || '',
+      })) : []);
     } catch (error) {
       console.error('Error fetching group vouchers report:', error);
       setGroupInfo(null);
@@ -274,7 +278,7 @@ const GroupVouchersReport = () => {
                     <TableRow key={`${row.voucherNumber}-${index}`}>
                       <TableCell>{formatVoucherDate(row.date)}</TableCell>
                       <TableCell>{row.particulars}</TableCell>
-                      <TableCell>{row.voucherType || ''}</TableCell>
+                      <TableCell>{row.voucherTypeName || ''}</TableCell>
                       <TableCell>{row.voucherNumber || ''}</TableCell>
                       <TableCell className="text-right">
                         {row.debit > 0 ? formatAmount(row.debit) : ''}

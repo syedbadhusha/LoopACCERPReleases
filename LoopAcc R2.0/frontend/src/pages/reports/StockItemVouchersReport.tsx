@@ -128,6 +128,7 @@ type VoucherRow = {
   date: string;
   particulars: string;
   voucherType: string;
+  voucherTypeName: string;
   voucherNumber: string;
   inwardQty: number;
   inwardValue: number;
@@ -163,6 +164,7 @@ const StockItemVouchersReport = () => {
   const [openingRow, setOpeningRow] = useState<RunState>({ qty: 0, value: 0 });
   const [loading, setLoading]   = useState(false);
   const [selectedBatchName, setSelectedBatchName] = useState('');
+  const [voucherTypeMap, setVoucherTypeMap] = useState<Record<string, string>>({});
 
   const currencySymbol = selectedCompany?.currency === 'INR' ? '₹'
     : selectedCompany?.currency === 'USD' ? '$'
@@ -175,12 +177,20 @@ const StockItemVouchersReport = () => {
     if (queryDateTo   && queryDateTo   !== dateTo)     setDateTo(queryDateTo);
   }, [queryItemId, queryDateFrom, queryDateTo]);
 
-  // ── fetch item list ────────────────────────────────────────────────────────
+  // ── fetch item list & voucher type names ─────────────────────────────────
   useEffect(() => {
     if (!selectedCompany) return;
     fetch(`http://localhost:5000/api/items?companyId=${selectedCompany.id}`)
       .then((r) => r.json())
       .then((j) => setItems(Array.isArray(j?.data) ? j.data : []))
+      .catch(console.error);
+    fetch(`http://localhost:5000/api/voucher-types?companyId=${selectedCompany.id}`)
+      .then((r) => r.json())
+      .then((j) => {
+        const map: Record<string, string> = {};
+        (Array.isArray(j?.data) ? j.data : []).forEach((vt: any) => { if (vt?.id) map[vt.id] = vt.name; });
+        setVoucherTypeMap(map);
+      })
       .catch(console.error);
   }, [selectedCompany]);
 
@@ -228,6 +238,9 @@ const StockItemVouchersReport = () => {
       const allItems: any[]   = Array.isArray(itemJson?.data)    ? itemJson.data    : [];
       const allVouchers: any[] = Array.isArray(voucherJson?.data) ? voucherJson.data : [];
       const batchJson = batchResp ? await batchResp.json() : null;
+
+      // Build/refresh voucher type id→name map from vouchers themselves (fast, no extra request)
+      const newTypeMap = { ...voucherTypeMap };
 
       setItems(allItems);
 
@@ -327,10 +340,13 @@ const StockItemVouchersReport = () => {
           return Number.isNaN(d.getTime()) ? vDate : format(d, 'd-MMM-yy');
         })();
 
-        const displayType = String(v?.voucher_type || '')
+        const baseDisplayType = String(v?.voucher_type || '')
           .split('-')
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
           .join(' ');
+        const displayType = v?.voucher_type_id && newTypeMap[v.voucher_type_id]
+          ? newTypeMap[v.voucher_type_id]
+          : baseDisplayType;
 
         for (const line of getLines(v)) {
           if (String(line?.item_id || '') !== selectedItemId) continue;
@@ -353,6 +369,7 @@ const StockItemVouchersReport = () => {
               date: displayDate,
               particulars,
               voucherType: displayType,
+              voucherTypeName: displayType,
               voucherNumber: String(v?.voucher_number || ''),
               inwardQty: qty,
               inwardValue: val,
@@ -370,6 +387,7 @@ const StockItemVouchersReport = () => {
               date: displayDate,
               particulars,
               voucherType: displayType,
+              voucherTypeName: displayType,
               voucherNumber: String(v?.voucher_number || ''),
               inwardQty: 0,
               inwardValue: 0,
@@ -598,7 +616,7 @@ const StockItemVouchersReport = () => {
                         <TableRow key={idx} className={row.inwardQty > 0 ? 'bg-green-50/30' : 'bg-red-50/20'}>
                           <TableCell className="border-r" style={dateColumnStyle}>{row.date}</TableCell>
                           <TableCell className="border-r">{row.particulars}</TableCell>
-                          <TableCell className="border-r" style={voucherTypeColumnStyle}>{row.voucherType}</TableCell>
+                          <TableCell className="border-r" style={voucherTypeColumnStyle}>{row.voucherTypeName || row.voucherType}</TableCell>
                           <TableCell className="text-right border-r" style={voucherNoColumnStyle}>{row.voucherNumber}</TableCell>
                           {/* inwards */}
                           <TableCell className="text-right" style={qtyColumnStyle}>

@@ -282,7 +282,7 @@ const LedgerReport = () => {
                     <TableRow key={index}>
                       <TableCell>{row.date}</TableCell>
                       <TableCell>{row.particulars}</TableCell>
-                      <TableCell>{row.voucherType || '-'}</TableCell>
+                      <TableCell>{row.voucherTypeName || row.voucherType || '-'}</TableCell>
                       <TableCell>
                         {row.voucherNumber || '-'}
                       </TableCell>

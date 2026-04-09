@@ -656,6 +656,12 @@ export async function getLedgerReportData(companyId, ledgerId, dateFrom, dateTo)
 
   const ledgerNameById = new Map(relatedLedgers.map((l) => [l.id, l.name]));
 
+  const voucherTypeIds = [...new Set(vouchers.map((v) => v.voucher_type_id).filter(Boolean))];
+  const voucherTypeRecords = voucherTypeIds.length > 0
+    ? await db.collection("voucher_types").find({ id: { $in: voucherTypeIds } }).toArray()
+    : [];
+  const voucherTypeNameById = new Map(voucherTypeRecords.map((vt) => [vt.id, vt.name]));
+
   const getBestCounterpartyName = (entries, pickCreditSide) => {
     let bestName = "";
     let bestAmount = -1;
@@ -706,6 +712,7 @@ export async function getLedgerReportData(companyId, ledgerId, dateFrom, dateTo)
         date: voucher.voucher_date,
         particulars,
         voucherType: voucher.voucher_type || "",
+        voucherTypeName: voucherTypeNameById.get(voucher.voucher_type_id) || voucher.voucher_type || "",
         voucherNumber: voucher.voucher_number || "",
         debit,
         credit,
@@ -856,6 +863,13 @@ export async function getGroupVoucherReportData(companyId, groupId, dateFrom, da
 
   const ledgerNameById = new Map(relatedLedgers.map((ledger) => [ledger.id, ledger.name]));
 
+  // Build voucher type name map (id → name)
+  const voucherTypeIds = [...new Set(vouchers.map(v => v.voucher_type_id).filter(Boolean))];
+  const voucherTypeRecords = voucherTypeIds.length > 0
+    ? await db.collection("voucher_types").find({ id: { $in: voucherTypeIds } }).toArray()
+    : [];
+  const voucherTypeNameById = new Map(voucherTypeRecords.map(vt => [vt.id, vt.name]));
+
   const getBestCounterpartyName = (entries, pickCreditSide) => {
     let bestName = "";
     let bestAmount = -1;
@@ -914,6 +928,7 @@ export async function getGroupVoucherReportData(companyId, groupId, dateFrom, da
       date: voucher.voucher_date,
       particulars,
       voucherType: voucher.voucher_type || "",
+      voucherTypeName: voucherTypeNameById.get(voucher.voucher_type_id) || voucher.voucher_type || "",
       voucherNumber: voucher.voucher_number || "",
       debit,
       credit,

@@ -16,23 +16,35 @@ interface VoucherEntry {
   voucher_number: string;
   voucher_date: string;
   voucher_type: string;
+  voucher_type_id: string;
+  voucher_type_name: string;
   is_pos: boolean;
   ledger_name: string;
-  total_amount: number;
-  net_amount: number;
+  particulars: string;
+  debit_amount: number;
+  credit_amount: number;
   narration: string | null;
+}
+
+interface VoucherTypeOption {
+  id: string;
+  name: string;
+  base_type: string;
 }
 const VoucherHistoryReport = () => {
   const navigate = useNavigate();
   const { selectedCompany } = useCompany();
   const { toast } = useToast();
   const [voucherData, setVoucherData] = useState<VoucherEntry[]>([]);
+  const [voucherTypes, setVoucherTypes] = useState<VoucherTypeOption[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Dynamic tax label based on company tax type
   const taxLabel = selectedCompany?.tax_type === 'GST' ? 'GST Amount' : 
                    selectedCompany?.tax_type === 'VAT' ? 'VAT Amount' : 
                    'Tax Amount';
+
+  const CREDIT_TYPES = new Set(['purchase', 'credit-note', 'payment']);
   // Load filter state from localStorage
   const [dateFrom, setDateFrom] = useState(() => {
     const saved = localStorage.getItem('voucherHistory_dateFrom');
@@ -47,6 +59,15 @@ const VoucherHistoryReport = () => {
     return saved || 'all';
   });
   const currencySymbol = selectedCompany?.currency === 'INR' ? '₹' : selectedCompany?.currency === 'USD' ? '$' : selectedCompany?.currency || '₹';
+
+  // Fetch voucher type master list for filter dropdown
+  useEffect(() => {
+    if (!selectedCompany) return;
+    fetch(`http://localhost:5000/api/voucher-types?companyId=${selectedCompany.id}`)
+      .then(r => r.json())
+      .then(json => setVoucherTypes(json.data || []))
+      .catch(() => setVoucherTypes([]));
+  }, [selectedCompany]);
   // Save filter state to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem('voucherHistory_dateFrom', dateFrom);
@@ -64,7 +85,7 @@ const VoucherHistoryReport = () => {
         companyId: selectedCompany.id,
         dateFrom,
         dateTo,
-        ...(voucherType !== 'all' && { voucherType }),
+        ...(voucherType !== 'all' && { voucherTypeId: voucherType }),
       });
 
       const resp = await fetch(`http://localhost:5000/api/vouchers/report/history?${params}`);
@@ -76,10 +97,13 @@ const VoucherHistoryReport = () => {
         voucher_number: item.voucher_number,
         voucher_date: item.voucher_date,
         voucher_type: item.voucher_type,
+        voucher_type_id: item.voucher_type_id || '',
+        voucher_type_name: item.voucher_type_name || item.voucher_type || '',
         is_pos: item.is_pos === true,
         ledger_name: item.ledger_name || '',
-        total_amount: item.total_amount,
-        net_amount: item.net_amount,
+        particulars: item.particulars || item.ledger_name || '',
+        debit_amount: CREDIT_TYPES.has(String(item.voucher_type || '').toLowerCase()) ? 0 : (item.net_amount || 0),
+        credit_amount: CREDIT_TYPES.has(String(item.voucher_type || '').toLowerCase()) ? (item.net_amount || 0) : 0,
         narration: item.narration,
       })) || [];
 
@@ -178,7 +202,7 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
             <h2>Voucher History Report</h2>
             <div class="date-range">
               <strong>Period:</strong> ${format(new Date(dateFrom), 'dd/MM/yyyy')} to ${format(new Date(dateTo), 'dd/MM/yyyy')}
-              ${voucherType !== 'all' ? `<br><strong>Type:</strong> ${voucherType.toUpperCase()}` : ''}
+              ${voucherType !== 'all' ? `<br><strong>Type:</strong> ${voucherTypes.find(vt => vt.id === voucherType)?.name || voucherType}` : ''}
             </div>
           </div>
           
@@ -188,7 +212,7 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                 <th>Date</th>
                 <th>Voucher No.</th>
                 <th>Type</th>
-                <th>Party</th>
+                <th>Particulars</th>
                 <th style="text-align: right">Total Amount</th>
                 <th style="text-align: right">Net Amount</th>
                 <th>Narration</th>
@@ -199,8 +223,8 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                 <tr>
                   <td>${format(new Date(item.voucher_date), 'dd/MM/yyyy')}</td>
                   <td>${item.voucher_number}</td>
-                  <td class="voucher-type">${item.voucher_type}</td>
-                  <td>${item.ledger_name}</td>
+                  <td class="voucher-type">${item.voucher_type_name}</td>
+                  <td>${item.particulars}</td>
                   <td class="amount">${currencySymbol} ${item.total_amount.toFixed(2)}</td>
                   <td class="amount">${currencySymbol} ${item.net_amount.toFixed(2)}</td>
                   <td>${item.narration || ''}</td>
@@ -293,15 +317,14 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
             <div>
               <Label htmlFor="voucher-type">Voucher Type</Label>
               <Select value={voucherType} onValueChange={setVoucherType}>
-                <SelectTrigger>
+                <SelectTrigger className="min-w-[180px]">
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="sales">Sales</SelectItem>
-                  <SelectItem value="purchase">Purchase</SelectItem>
-                  <SelectItem value="payment">Payment</SelectItem>
-                  <SelectItem value="receipt">Receipt</SelectItem>
+                  {voucherTypes.map(vt => (
+                    <SelectItem key={vt.id} value={vt.id}>{vt.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -323,9 +346,9 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                     <TableHead>Date</TableHead>
                     <TableHead>Voucher No.</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead style={{ minWidth: '200px' }}>Party</TableHead>
-                    <TableHead className="text-right">Total Amount</TableHead>
-                      <TableHead className="text-right">Net Amount</TableHead>
+                    <TableHead style={{ minWidth: '200px' }}>Particulars</TableHead>
+                    <TableHead className="text-right">Debit ({currencySymbol})</TableHead>
+                      <TableHead className="text-right">Credit ({currencySymbol})</TableHead>
                       <TableHead>Narration</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
@@ -335,10 +358,10 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                     <TableRow key={item.id}>
                       <TableCell>{format(new Date(item.voucher_date), 'dd/MM/yyyy')}</TableCell>
                       <TableCell>{item.voucher_number}</TableCell>
-                      <TableCell className="capitalize">{item.voucher_type}</TableCell>
-                      <TableCell style={{ minWidth: '200px' }}>{item.ledger_name}</TableCell>
-                      <TableCell className="text-right">{currencySymbol} {item.total_amount.toFixed(2)}</TableCell>
-                        <TableCell className="text-right">{currencySymbol} {item.net_amount.toFixed(2)}</TableCell>
+                      <TableCell className="capitalize">{item.voucher_type_name}</TableCell>
+                      <TableCell style={{ minWidth: '200px' }}>{item.particulars}</TableCell>
+                      <TableCell className="text-right">{item.debit_amount > 0 ? `${currencySymbol} ${item.debit_amount.toFixed(2)}` : ''}</TableCell>
+                        <TableCell className="text-right">{item.credit_amount > 0 ? `${currencySymbol} ${item.credit_amount.toFixed(2)}` : ''}</TableCell>
                         <TableCell>{item.narration || ''}</TableCell>
                         <TableCell>
                         <div className="flex gap-1">
@@ -363,10 +386,10 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                     <TableRow className="font-semibold bg-muted/50">
                       <TableCell colSpan={4}>Total</TableCell>
                       <TableCell className="text-right">
-                        {currencySymbol} {voucherData.reduce((sum, item) => sum + item.total_amount, 0).toFixed(2)}
+                        {currencySymbol} {voucherData.reduce((sum, item) => sum + item.debit_amount, 0).toFixed(2)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {currencySymbol} {voucherData.reduce((sum, item) => sum + item.net_amount, 0).toFixed(2)}
+                        {currencySymbol} {voucherData.reduce((sum, item) => sum + item.credit_amount, 0).toFixed(2)}
                       </TableCell>
                       <TableCell colSpan={2}></TableCell>
                     </TableRow>

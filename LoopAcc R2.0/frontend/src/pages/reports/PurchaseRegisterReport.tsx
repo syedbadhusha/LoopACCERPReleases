@@ -13,10 +13,11 @@ interface PurchaseEntry {
   id: string;
   voucher_number: string;
   voucher_date: string;
+  voucher_type: string;
+  voucher_type_name: string;
   ledger_name: string;
-  total_amount: number;
-  tax_amount: number;
-  net_amount: number;
+  debit_amount: number;
+  credit_amount: number;
   narration: string;
 }
 
@@ -27,10 +28,6 @@ const PurchaseRegisterReport = () => {
   const [purchaseData, setPurchaseData] = useState<PurchaseEntry[]>([]);
   const [loading, setLoading] = useState(false);
   
-  // Dynamic tax label based on company tax type
-  const taxLabel = selectedCompany?.tax_type === 'GST' ? 'GST Amount' : 
-                   selectedCompany?.tax_type === 'VAT' ? 'VAT Amount' : 
-                   'Tax Amount';
   // Load filter state from localStorage
   const [dateFrom, setDateFrom] = useState(() => {
     const saved = localStorage.getItem('purchaseRegister_dateFrom');
@@ -71,10 +68,11 @@ const PurchaseRegisterReport = () => {
         id: voucher.id,
         voucher_number: voucher.voucher_number,
         voucher_date: voucher.voucher_date,
+        voucher_type: voucher.voucher_type || '',
+        voucher_type_name: voucher.voucher_type_name || '',
         ledger_name: voucher.ledger_name || 'Unknown',
-        total_amount: voucher.total_amount,
-        tax_amount: voucher.tax_amount || 0,
-        net_amount: voucher.net_amount,
+        debit_amount: String(voucher.voucher_type || '').toLowerCase() === 'debit-note' ? (voucher.net_amount || 0) : 0,
+        credit_amount: String(voucher.voucher_type || '').toLowerCase() === 'debit-note' ? 0 : (voucher.net_amount || 0),
         narration: voucher.narration || ''
       }));
 
@@ -114,9 +112,8 @@ const PurchaseRegisterReport = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const totalAmount = purchaseData.reduce((sum, purchase) => sum + purchase.total_amount, 0);
-    const totalTax = purchaseData.reduce((sum, purchase) => sum + purchase.tax_amount, 0);
-    const totalNet = purchaseData.reduce((sum, purchase) => sum + purchase.net_amount, 0);
+    const totalDebit = purchaseData.reduce((sum, purchase) => sum + purchase.debit_amount, 0);
+    const totalCredit = purchaseData.reduce((sum, purchase) => sum + purchase.credit_amount, 0);
 
     printWindow.document.write(`
       <html>
@@ -145,11 +142,11 @@ const PurchaseRegisterReport = () => {
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Bill No.</th>
+                <th>Voucher Number</th>
+                <th>Voucher Type</th>
                 <th>Supplier</th>
-                <th>Total Amount</th>
-                <th>${taxLabel}</th>
-                <th>Net Amount</th>
+                <th>Debit</th>
+                <th>Credit</th>
                 <th>Narration</th>
               </tr>
             </thead>
@@ -158,18 +155,17 @@ const PurchaseRegisterReport = () => {
                 <tr>
                   <td>${purchase.voucher_date}</td>
                   <td>${purchase.voucher_number}</td>
+                  <td>${purchase.voucher_type_name}</td>
                   <td>${purchase.ledger_name}</td>
-                  <td class="text-right">${currencySymbol} ${purchase.total_amount.toFixed(2)}</td>
-                  <td class="text-right">${currencySymbol} ${purchase.tax_amount.toFixed(2)}</td>
-                  <td class="text-right">${currencySymbol} ${purchase.net_amount.toFixed(2)}</td>
+                  <td class="text-right">${purchase.debit_amount > 0 ? `${currencySymbol} ${purchase.debit_amount.toFixed(2)}` : ''}</td>
+                  <td class="text-right">${purchase.credit_amount > 0 ? `${currencySymbol} ${purchase.credit_amount.toFixed(2)}` : ''}</td>
                   <td>${purchase.narration}</td>
                 </tr>
               `).join('')}
               <tr class="total-row">
-                <td colspan="3"><strong>TOTAL</strong></td>
-                <td class="text-right"><strong>${currencySymbol} ${totalAmount.toFixed(2)}</strong></td>
-                <td class="text-right"><strong>${currencySymbol} ${totalTax.toFixed(2)}</strong></td>
-                <td class="text-right"><strong>${currencySymbol} ${totalNet.toFixed(2)}</strong></td>
+                <td colspan="4"><strong>TOTAL</strong></td>
+                <td class="text-right"><strong>${currencySymbol} ${totalDebit.toFixed(2)}</strong></td>
+                <td class="text-right"><strong>${currencySymbol} ${totalCredit.toFixed(2)}</strong></td>
                 <td></td>
               </tr>
             </tbody>
@@ -271,11 +267,11 @@ const handleBack = () => {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Date</TableHead>
-                      <TableHead>Bill No.</TableHead>
+                      <TableHead>Voucher Number</TableHead>
+                      <TableHead>Voucher Type</TableHead>
                       <TableHead style={{ minWidth: '200px' }}>Supplier</TableHead>
-                      <TableHead className="text-right">Total Amount</TableHead>
-                      <TableHead className="text-right">{taxLabel}</TableHead>
-                      <TableHead className="text-right">Net Amount</TableHead>
+                      <TableHead className="text-right">Debit ({currencySymbol})</TableHead>
+                      <TableHead className="text-right">Credit ({currencySymbol})</TableHead>
                       <TableHead>Narration</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
@@ -285,10 +281,10 @@ const handleBack = () => {
                       <TableRow key={purchase.id}>
                         <TableCell>{purchase.voucher_date}</TableCell>
                         <TableCell>{purchase.voucher_number}</TableCell>
+                        <TableCell>{purchase.voucher_type_name}</TableCell>
                         <TableCell style={{ minWidth: '200px' }}>{purchase.ledger_name}</TableCell>
-                        <TableCell className="text-right">{currencySymbol} {purchase.total_amount.toFixed(2)}</TableCell>
-                        <TableCell className="text-right">{currencySymbol} {purchase.tax_amount.toFixed(2)}</TableCell>
-                        <TableCell className="text-right">{currencySymbol} {purchase.net_amount.toFixed(2)}</TableCell>
+                        <TableCell className="text-right">{purchase.debit_amount > 0 ? `${currencySymbol} ${purchase.debit_amount.toFixed(2)}` : ''}</TableCell>
+                        <TableCell className="text-right">{purchase.credit_amount > 0 ? `${currencySymbol} ${purchase.credit_amount.toFixed(2)}` : ''}</TableCell>
                         <TableCell>{purchase.narration}</TableCell>
                         <TableCell>
                         <div className="flex gap-1">
@@ -312,7 +308,7 @@ const handleBack = () => {
                     ))}
                     {purchaseData.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-8">
+                        <TableCell colSpan={7} className="text-center py-8">
                           No purchase transactions found for the selected period
                         </TableCell>
                       </TableRow>
@@ -321,15 +317,12 @@ const handleBack = () => {
                 </Table>
                 {purchaseData.length > 0 && (
                   <div className="mt-4 p-4 bg-muted rounded-lg">
-                    <div className="grid grid-cols-3 gap-4 text-sm font-medium">
+                    <div className="grid grid-cols-2 gap-4 justify-end text-sm font-medium">
                       <div className="text-right">
-                        Total Amount: {currencySymbol} {purchaseData.reduce((sum, purchase) => sum + purchase.total_amount, 0).toFixed(2)}
+                        Total Debit: {currencySymbol} {purchaseData.reduce((sum, purchase) => sum + purchase.debit_amount, 0).toFixed(2)}
                       </div>
                       <div className="text-right">
-                        Total {taxLabel}: {currencySymbol} {purchaseData.reduce((sum, purchase) => sum + purchase.tax_amount, 0).toFixed(2)}
-                      </div>
-                      <div className="text-right">
-                        Net Total: {currencySymbol} {purchaseData.reduce((sum, purchase) => sum + purchase.net_amount, 0).toFixed(2)}
+                        Total Credit: {currencySymbol} {purchaseData.reduce((sum, purchase) => sum + purchase.credit_amount, 0).toFixed(2)}
                       </div>
                     </div>
                   </div>

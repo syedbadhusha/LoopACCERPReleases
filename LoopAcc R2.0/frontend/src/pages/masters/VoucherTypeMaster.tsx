@@ -452,13 +452,14 @@ const VoucherTypeMaster = () => {
 
       {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className={form.is_pos ? 'max-w-3xl max-h-[92vh] overflow-y-auto' : 'max-w-lg'}>
-          <DialogHeader>
+        <DialogContent className={form.is_pos ? 'max-w-3xl flex flex-col max-h-[90vh]' : 'max-w-lg flex flex-col max-h-[90vh]'}>
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>
               {editingId ? 'Edit Voucher Type' : 'New Voucher Type'}
             </DialogTitle>
           </DialogHeader>
 
+          <div className="flex-1 overflow-y-auto min-h-0 pr-1">
           <div className={form.is_pos ? 'grid grid-cols-2 gap-6 py-2' : 'space-y-4 py-2'}>
             {/* Left column: basic fields */}
             <div className="space-y-4">
@@ -623,7 +624,7 @@ const VoucherTypeMaster = () => {
 
             {/* Right column: POS Ledger Configuration (only when is_pos is true) */}
             {form.is_pos && posEnabled && (
-              <div className="rounded-lg border p-4 space-y-3 bg-muted/20 h-fit">
+              <div className="rounded-lg border p-4 space-y-3 bg-muted/20">
                 <Label className="font-semibold text-sm block">POS Ledger Configuration</Label>
 
                 {/* Sales Account */}
@@ -779,8 +780,9 @@ const VoucherTypeMaster = () => {
               </div>
             )}
           </div>{/* end grid */}
+          </div>{/* end scroll wrapper */}
 
-          <DialogFooter>
+          <DialogFooter className="flex-shrink-0">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>

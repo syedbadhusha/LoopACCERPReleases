@@ -2862,6 +2862,7 @@ export async function getVoucherHistory(
   dateFrom,
   dateTo,
   voucherType,
+  voucherTypeId,
 ) {
   const db = getDb();
   const match = {
@@ -2873,7 +2874,9 @@ export async function getVoucherHistory(
     },
   };
 
-  if (voucherType && voucherType !== "all") {
+  if (voucherTypeId && voucherTypeId !== "all") {
+    match.voucher_type_id = voucherTypeId;
+  } else if (voucherType && voucherType !== "all") {
     match.voucher_type = voucherType;
   }
 
@@ -2890,6 +2893,15 @@ export async function getVoucherHistory(
         },
       },
       { $unwind: { path: "$ledger", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "voucher_types",
+          localField: "voucher_type_id",
+          foreignField: "id",
+          as: "vtype",
+        },
+      },
+      { $unwind: { path: "$vtype", preserveNullAndEmptyArrays: true } },
       { $sort: { voucher_date: -1 } },
       {
         $project: {
@@ -2897,8 +2909,12 @@ export async function getVoucherHistory(
           voucher_number: 1,
           voucher_date: 1,
           voucher_type: 1,
+          voucher_type_id: 1,
+          "vtype.name": 1,
           is_pos: 1,
+          ledger_id: 1,
           "ledger.name": 1,
+          ledger_entries: 1,
           total_amount: 1,
           net_amount: 1,
           narration: 1,
@@ -2908,17 +2924,55 @@ export async function getVoucherHistory(
     ])
     .toArray();
 
-  return vouchers.map((v) => ({
-    id: v.id,
-    voucher_number: v.voucher_number,
-    voucher_date: v.voucher_date,
-    voucher_type: v.voucher_type,
-    is_pos: v.is_pos === true,
-    ledger_name: v.ledger?.name || "",
-    total_amount: v.total_amount || 0,
-    net_amount: v.net_amount || 0,
-    narration: v.narration,
-  }));
+  // Collect all ledger IDs from entries to resolve bank/cash names
+  const allEntryLedgerIds = new Set();
+  for (const v of vouchers) {
+    for (const e of (Array.isArray(v.ledger_entries) ? v.ledger_entries : [])) {
+      if (e?.ledger_id) allEntryLedgerIds.add(e.ledger_id);
+    }
+  }
+  const entryLedgerRecords = allEntryLedgerIds.size > 0
+    ? await db.collection("ledgers").find({ id: { $in: [...allEntryLedgerIds] } }).toArray()
+    : [];
+  const entryLedgerNameById = new Map(entryLedgerRecords.map((l) => [l.id, l.name]));
+
+  const isCreditEntry = (e) => {
+    if (Number(e?.credit_amount) > 0) return true;
+    if (Number(e?.debit_amount) > 0) return false;
+    return String(e?.isDeemedPositive || "").toLowerCase() !== "yes";
+  };
+  const isDebitEntry = (e) => !isCreditEntry(e);
+
+  return vouchers.map((v) => {
+    const entries = Array.isArray(v.ledger_entries) ? v.ledger_entries : [];
+    const vt = String(v.voucher_type || "").toLowerCase();
+    let particulars = v.ledger?.name || "";
+
+    if (vt === "payment") {
+      // Pay from = the credit (bank/cash) entry
+      const payFrom = entries.find((e) => isCreditEntry(e) && entryLedgerNameById.has(e.ledger_id));
+      if (payFrom) particulars = entryLedgerNameById.get(payFrom.ledger_id) || particulars;
+    } else if (vt === "receipt") {
+      // Receive into = the debit (bank/cash) entry
+      const receiveInto = entries.find((e) => isDebitEntry(e) && entryLedgerNameById.has(e.ledger_id));
+      if (receiveInto) particulars = entryLedgerNameById.get(receiveInto.ledger_id) || particulars;
+    }
+
+    return {
+      id: v.id,
+      voucher_number: v.voucher_number,
+      voucher_date: v.voucher_date,
+      voucher_type: v.voucher_type,
+      voucher_type_id: v.voucher_type_id || "",
+      voucher_type_name: v.vtype?.name || v.voucher_type || "",
+      is_pos: v.is_pos === true,
+      ledger_name: v.ledger?.name || "",
+      particulars,
+      total_amount: v.total_amount || 0,
+      net_amount: v.net_amount || 0,
+      narration: v.narration,
+    };
+  });
 }
 
 // Get sales register report (sales vouchers with items)
@@ -2947,10 +3001,19 @@ export async function getSalesRegister(companyId, dateFrom, dateTo) {
     ledgerMap[l.id] = l.name;
   });
 
-  // Add ledger_name to each voucher
+  // Fetch voucher type names
+  const vtIds = [...new Set(vouchers.map((v) => v.voucher_type_id).filter(Boolean))];
+  const vtRecords = vtIds.length > 0
+    ? await db.collection("voucher_types").find({ id: { $in: vtIds } }).toArray()
+    : [];
+  const vtNameMap = {};
+  vtRecords.forEach((vt) => { vtNameMap[vt.id] = vt.name; });
+
+  // Add ledger_name and voucher_type_name to each voucher
   return vouchers.map((v) => ({
     ...v,
     ledger_name: ledgerMap[v.ledger_id] || "Unknown",
+    voucher_type_name: vtNameMap[v.voucher_type_id] || v.voucher_type || "",
   }));
 }
 
@@ -2980,10 +3043,19 @@ export async function getPurchaseRegister(companyId, dateFrom, dateTo) {
     ledgerMap[l.id] = l.name;
   });
 
-  // Add ledger_name to each voucher
+  // Fetch voucher type names
+  const vtIds = [...new Set(vouchers.map((v) => v.voucher_type_id).filter(Boolean))];
+  const vtRecords = vtIds.length > 0
+    ? await db.collection("voucher_types").find({ id: { $in: vtIds } }).toArray()
+    : [];
+  const vtNameMap = {};
+  vtRecords.forEach((vt) => { vtNameMap[vt.id] = vt.name; });
+
+  // Add ledger_name and voucher_type_name to each voucher
   return vouchers.map((v) => ({
     ...v,
     ledger_name: ledgerMap[v.ledger_id] || "Unknown",
+    voucher_type_name: vtNameMap[v.voucher_type_id] || v.voucher_type || "",
   }));
 }
 

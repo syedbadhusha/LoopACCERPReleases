@@ -34,6 +34,7 @@ import {
   Package,
   ChevronDown,
   RotateCcw,
+  Printer,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
@@ -73,10 +74,35 @@ interface ItemMaster {
   sgst_rate: number;
   enable_batches?: boolean;
   image?: string;
+  hsn_code?: string;
   uom_master?: { name: string; symbol: string };
   stock_groups?: { id: string; name: string };
   stock_categories?: { id: string; name: string };
   standard_rates?: { date: string; cost: number; rate: number }[];
+}
+
+interface ReceiptData {
+  voucherNumber: string;
+  voucherDate: string;
+  voucherTypeName: string;
+  cart: CartItem[];
+  subtotal: number;
+  totalDiscount: number;
+  totalTax: number;
+  grandTotal: number;
+  splitCash: number;
+  splitCard: number;
+  splitOnline: number;
+  cashTendered: number;
+  cashChange: number;
+  isReturnMode: boolean;
+  taxType: string;
+  companyName: string;
+  companyState?: string;
+  companyGstin?: string;
+  companyAddress?: string;
+  companyEmail?: string;
+  userName: string;
 }
 
 interface CartItem {
@@ -176,7 +202,7 @@ const POSScreen = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, currentUser } = useCompany();
   const isTaxEnabled = isCompanyTaxEnabled(selectedCompany);
   const taxType = getCompanyTaxType(selectedCompany);
   const isBatchEnabled = isCompanyBatchesEnabled(selectedCompany);
@@ -215,6 +241,7 @@ const POSScreen = () => {
   // ── Success dialog
   const [successDialogOpen, setSuccessDialogOpen] = useState(false);
   const [lastVoucherNo, setLastVoucherNo] = useState('');
+  const [lastSaleData, setLastSaleData] = useState<ReceiptData | null>(null);
 
   // ── Quick create item
   const [quickCreateItemOpen, setQuickCreateItemOpen] = useState(false);
@@ -825,6 +852,30 @@ const POSScreen = () => {
       const json = await res.json();
       if (!json.success) throw new Error(json.message || 'Failed to save');
 
+      // Snapshot receipt data before cart is cleared
+      setLastSaleData({
+        voucherNumber,
+        voucherDate,
+        voucherTypeName: selectedType?.name || 'POS Sales',
+        cart: [...cart],
+        subtotal,
+        totalDiscount,
+        totalTax,
+        grandTotal,
+        splitCash,
+        splitCard,
+        splitOnline,
+        cashTendered: cashTenderedNum,
+        cashChange,
+        isReturnMode,
+        taxType,
+        companyName: selectedCompany?.name || '',
+        companyState: selectedCompany?.state,
+        companyAddress: selectedCompany?.address,
+        companyGstin: selectedCompany?.tax_registration_number,
+        companyEmail: selectedCompany?.settings?.company_email,
+        userName: currentUser?.username || '',
+      });
       setLastVoucherNo(voucherNumber);
       setPayDialogOpen(false);
       setSuccessDialogOpen(true);
@@ -845,6 +896,288 @@ const POSScreen = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  // ── Thermal receipt print
+  const handlePrintReceipt = () => {
+    const d = lastSaleData;
+    if (!d) return;
+
+    // Indian state GST codes
+    const STATE_CODES: Record<string, string> = {
+      'andhra pradesh': '37', 'arunachal pradesh': '12', 'assam': '18', 'bihar': '10',
+      'chhattisgarh': '22', 'goa': '30', 'gujarat': '24', 'haryana': '06',
+      'himachal pradesh': '02', 'jharkhand': '20', 'karnataka': '29', 'kerala': '32',
+      'madhya pradesh': '23', 'maharashtra': '27', 'manipur': '14', 'meghalaya': '17',
+      'mizoram': '15', 'nagaland': '13', 'odisha': '21', 'punjab': '03',
+      'rajasthan': '08', 'sikkim': '11', 'tamil nadu': '33', 'telangana': '36',
+      'tripura': '16', 'uttar pradesh': '09', 'uttarakhand': '05', 'west bengal': '19',
+      'delhi': '07', 'chandigarh': '04', 'puducherry': '34', 'jammu & kashmir': '01',
+      'jammu and kashmir': '01', 'ladakh': '38', 'lakshadweep': '31',
+      'andaman and nicobar': '35', 'dadra and nagar haveli': '26', 'daman and diu': '25',
+    };
+
+    const fmtAmt = (n: number) =>
+      Math.abs(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const stateCode = d.companyState
+      ? STATE_CODES[d.companyState.toLowerCase().trim()] || ''
+      : '';
+    const stateDisplay = d.companyState
+      ? `State Name : ${d.companyState.toUpperCase()}${stateCode ? `, Code : ${stateCode}` : ''}`
+      : '';
+
+    // Format voucher date as D-M-YYYY
+    const fmtDate = (iso: string) => {
+      const dt = new Date(iso);
+      if (isNaN(dt.getTime())) return iso;
+      return `${dt.getDate()}-${dt.getMonth() + 1}-${dt.getFullYear()}`;
+    };
+
+    const now = new Date();
+    const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} hrs`;
+
+    const isGST = d.taxType === 'GST';
+    const docTitle = d.isReturnMode ? 'POS Return' : 'POS Sales';
+
+    // ── Per-item rows ──────────────────────────────────────────────────────────
+    // Columns: Sl | Description+Batch | HSN/SAC | Qty | Rate | Amount
+    let itemRowsHtml = '';
+    let sl = 1;
+    for (const line of d.cart) {
+      const cgstAmt = isGST ? line.tax_amount / 2 : 0;
+      const sgstAmt = isGST ? line.tax_amount / 2 : 0;
+      const vatAmt  = !isGST ? line.tax_amount : 0;
+
+      itemRowsHtml += `
+<tr>
+  <td class="sl">${sl++}</td>
+  <td class="desc">${line.item.name}${line.batch_number ? `<br><em>${line.batch_number}</em>` : ''}</td>
+  <td class="hsn">${line.item.hsn_code || ''}</td>
+  <td class="num">${line.qty}</td>
+  <td class="num">${fmtAmt(line.rate)}</td>
+  <td class="num">${fmtAmt(line.amount)}</td>
+</tr>`;
+
+      if (isGST && cgstAmt > 0) {
+        itemRowsHtml += `
+<tr><td></td><td></td><td></td><td></td><td class="num tax-lbl">CGST</td><td class="num tax-lbl">${fmtAmt(cgstAmt)}</td></tr>
+<tr><td></td><td></td><td></td><td></td><td class="num tax-lbl">SGST</td><td class="num tax-lbl">${fmtAmt(sgstAmt)}</td></tr>`;
+      } else if (!isGST && vatAmt > 0) {
+        itemRowsHtml += `
+<tr><td></td><td></td><td></td><td></td><td class="num tax-lbl">VAT</td><td class="num tax-lbl">${fmtAmt(vatAmt)}</td></tr>`;
+      }
+    }
+
+    const totalQty = d.cart.reduce((s, l) => s + l.qty, 0);
+    const currSym = '&#8377;';
+
+    // ── Tax summary ────────────────────────────────────────────────────────────
+    let taxSummaryHtml = '';
+    const buildTaxRows = (groups: Record<string, { base: number; tax: number }>, labelFn: (r: string) => [string, string]) => {
+      let html = '';
+      for (const [rate, val] of Object.entries(groups)) {
+        const [lbl1, lbl2] = labelFn(rate);
+        html += `<tr><td class="tlbl">${lbl1}</td><td class="ton">On</td><td class="tnum">${fmtAmt(val.base)}</td><td class="tnum">${fmtAmt(val.tax)}</td></tr>`;
+        if (lbl2) {
+          html += `<tr><td class="tlbl">${lbl2}</td><td class="ton">On</td><td class="tnum">${fmtAmt(val.base)}</td><td class="tnum">${fmtAmt(val.tax)}</td></tr>`;
+        }
+      }
+      return html;
+    };
+
+    if (isGST && d.totalTax > 0) {
+      const taxGroups: Record<string, { base: number; tax: number }> = {};
+      for (const line of d.cart) {
+        if (line.tax_percent > 0 && line.tax_amount > 0) {
+          const rate = String(line.tax_percent / 2);
+          if (!taxGroups[rate]) taxGroups[rate] = { base: 0, tax: 0 };
+          taxGroups[rate].base += line.amount;
+          taxGroups[rate].tax  += line.tax_amount / 2;
+        }
+      }
+      taxSummaryHtml = buildTaxRows(taxGroups, r => [`CGST @${r}%`, `SGST/UTGST @${r}%`]);
+      taxSummaryHtml += `<tr class="ttotal"><td colspan="3">Total</td><td class="tnum">${fmtAmt(d.totalTax)}</td></tr>`;
+    } else if (!isGST && d.totalTax > 0) {
+      const taxGroups: Record<string, { base: number; tax: number }> = {};
+      for (const line of d.cart) {
+        if (line.tax_percent > 0 && line.tax_amount > 0) {
+          const rate = String(line.tax_percent);
+          if (!taxGroups[rate]) taxGroups[rate] = { base: 0, tax: 0 };
+          taxGroups[rate].base += line.amount;
+          taxGroups[rate].tax  += line.tax_amount;
+        }
+      }
+      taxSummaryHtml = buildTaxRows(taxGroups, r => [`VAT @${r}%`, '']);
+      taxSummaryHtml += `<tr class="ttotal"><td colspan="3">Total</td><td class="tnum">${fmtAmt(d.totalTax)}</td></tr>`;
+    }
+
+    // ── Payment rows ───────────────────────────────────────────────────────────
+    let payRowsHtml = '';
+    const payRow = (label: string, amt: number, italic = false) => {
+      const st = italic ? ' style="font-style:italic;"' : '';
+      return `<tr${st}><td class="plbl">${label}</td><td class="pcolon">:</td><td class="pamt">${fmtAmt(amt)}</td></tr>`;
+    };
+    if (d.splitCash > 0) {
+      payRowsHtml += payRow('Cash', d.splitCash);
+      if (d.cashTendered > 0) {
+        payRowsHtml += payRow('Cash Tendered', d.cashTendered);
+        payRowsHtml += payRow('Balance', d.cashChange, true);
+      }
+    }
+    if (d.splitCard   > 0) payRowsHtml += payRow('Card',   d.splitCard);
+    if (d.splitOnline > 0) payRowsHtml += payRow('Online', d.splitOnline);
+
+    // ── HTML ───────────────────────────────────────────────────────────────────
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${docTitle} - ${d.voucherNumber}</title>
+<style>
+  @page { size: 80mm auto; margin: 3mm 4mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 9pt;
+    width: 72mm;
+    margin: 0 auto;
+    color: #000;
+    background: #fff;
+  }
+  p { margin: 1px 0; }
+  .center { text-align: center; }
+  .company { font-size: 11pt; font-weight: bold; text-align: center; margin-bottom: 2px; }
+  .subhdr  { font-size: 8.5pt; text-align: center; }
+  .doctitle { font-size: 10pt; font-weight: bold; text-align: center; margin: 3px 0; }
+  .solid { border-top: 1px solid #000; margin: 2px 0; }
+  /* Info table */
+  .info-tbl { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin: 2px 0; }
+  .info-tbl td { padding: 0; vertical-align: top; }
+  .info-tbl .right { text-align: right; }
+  /* Items table */
+  .itm { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 8pt; }
+  .itm colgroup col.c-sl   { width: 5%;  }
+  .itm colgroup col.c-desc { width: 33%; }
+  .itm colgroup col.c-hsn  { width: 13%; }
+  .itm colgroup col.c-qty  { width: 8%;  }
+  .itm colgroup col.c-rate { width: 20%; }
+  .itm colgroup col.c-amt  { width: 21%; }
+  .itm thead tr { border-top: 1px solid #000; border-bottom: 1px solid #000; }
+  .itm th { font-weight: bold; padding: 1px 1px; text-align: right; }
+  .itm th.left { text-align: left; }
+  .itm th.center { text-align: center; }
+  .itm td { padding: 1px 1px; vertical-align: top; }
+  .itm td.sl   { text-align: left; }
+  .itm td.desc { text-align: left; word-break: break-word; }
+  .itm td.hsn  { text-align: center; word-break: break-all; font-size: 7.5pt; }
+  .itm td.num  { text-align: right; white-space: nowrap; }
+  .itm td.tax-lbl { font-size: 7.5pt; text-align: right; white-space: nowrap; }
+  /* Total row below items */
+  .tot-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .tot-tbl td { padding: 1px 1px; font-weight: bold; border-top: 1px solid #000; white-space: nowrap; }
+  .tot-tbl .left { text-align: left; }
+  .tot-tbl .right { text-align: right; }
+  /* Tax summary */
+  .tax-tbl { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .tax-tbl td { padding: 1px 1px; }
+  .tax-tbl td.tlbl { text-align: left; width: 44%; }
+  .tax-tbl td.ton  { text-align: center; width: 8%; }
+  .tax-tbl td.tnum { text-align: right; white-space: nowrap; width: 24%; }
+  .tax-tbl tr.ttotal td { font-weight: bold; border-top: 1px solid #000; }
+  /* Payment */
+  .pay-tbl { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .pay-tbl td { padding: 1px 1px; }
+  .pay-tbl td.plbl  { text-align: left; width: 55%; }
+  .pay-tbl td.pcolon { text-align: center; width: 5%; }
+  .pay-tbl td.pamt  { text-align: right; white-space: nowrap; width: 40%; }
+  /* Total paid row */
+  .paid-tbl { width: 100%; border-collapse: collapse; }
+  .paid-tbl td { font-weight: bold; border-top: 1px solid #000; padding: 1px 1px; }
+  .paid-tbl .right { text-align: right; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <p class="company">${d.companyName}</p>
+  ${stateDisplay ? `<p class="subhdr">${stateDisplay}</p>` : ''}
+  ${d.companyGstin  ? `<p class="subhdr">GSTIN : ${d.companyGstin}</p>`  : ''}
+  ${d.companyAddress ? `<p class="subhdr">${d.companyAddress}</p>` : ''}
+  ${d.companyEmail   ? `<p class="subhdr">E-Mail : ${d.companyEmail}</p>` : ''}
+  <p class="doctitle">${docTitle}</p>
+  <hr class="solid">
+
+  <table class="info-tbl">
+    <tr>
+      <td>Bill No. : ${d.voucherNumber}</td>
+      <td class="right">Time : ${timeStr}</td>
+    </tr>
+    <tr>
+      <td>Date : ${fmtDate(d.voucherDate)}</td>
+      <td class="right">User : ${d.userName}</td>
+    </tr>
+  </table>
+  <hr class="solid">
+
+  <table class="itm">
+    <colgroup>
+      <col class="c-sl"><col class="c-desc"><col class="c-hsn">
+      <col class="c-qty"><col class="c-rate"><col class="c-amt">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="left">Sl</th>
+        <th class="left">Description<br><span style="font-weight:normal;font-size:7pt;">Batch</span></th>
+        <th class="center">HSN/<br>SAC</th>
+        <th>Qty</th>
+        <th>Rate</th>
+        <th>Amount</th>
+      </tr>
+    </thead>
+    <tbody>${itemRowsHtml}</tbody>
+  </table>
+
+  <table class="tot-tbl">
+    <colgroup>
+      <col style="width:5%"><col style="width:33%"><col style="width:13%">
+      <col style="width:8%"><col style="width:20%"><col style="width:21%">
+    </colgroup>
+    <tr>
+      <td></td>
+      <td class="left">Total</td>
+      <td></td>
+      <td class="right">${totalQty}</td>
+      <td></td>
+      <td class="right">${currSym}${fmtAmt(d.grandTotal)}</td>
+    </tr>
+  </table>
+
+  ${taxSummaryHtml ? `
+  <hr class="solid">
+  <table class="tax-tbl">${taxSummaryHtml}</table>` : ''}
+
+  ${payRowsHtml ? `
+  <hr class="solid">
+  <table class="pay-tbl">${payRowsHtml}</table>
+  <hr class="solid">
+  <table class="paid-tbl">
+    <tr>
+      <td>Total Paid</td>
+      <td class="right">${fmtAmt(d.grandTotal)}</td>
+    </tr>
+  </table>` : ''}
+
+  <hr class="solid">
+  <p class="center" style="margin-top:5px;">welcome</p>
+  <p class="center">come again</p>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank', 'width=380,height=700');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 300);
   };
 
   // ── No POS types configured
@@ -1332,8 +1665,8 @@ const POSScreen = () => {
             </div>
 
             <div className="px-3 pb-3 flex flex-col gap-2">
-              {/* Hold button: save without payment — sales mode only */}
-              {!isReturnMode && (
+              {/* Hold button: save without payment — new sales only (not edit mode) */}
+              {!isReturnMode && !isEditMode && (
                 <Button
                   variant="outline"
                   className="w-full h-9 text-sm font-medium border-amber-400 text-amber-600 hover:bg-amber-50"
@@ -1598,6 +1931,14 @@ const POSScreen = () => {
               </p>
               <p className="text-sm text-muted-foreground mt-1">Voucher: <strong>{lastVoucherNo}</strong></p>
             </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={handlePrintReceipt}
+            >
+              <Printer className="h-4 w-4 mr-2" />
+              Print Receipt
+            </Button>
             <div className="flex gap-2 w-full">
               {!isEditMode && (
                 <Button
