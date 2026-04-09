@@ -2,9 +2,14 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, BarChart3, FileText, BookOpen, Calculator, ShoppingCart, Package, History, TrendingUp, TrendingDown } from 'lucide-react';
+import { useCompany } from '@/contexts/CompanyContext';
+import { isCompanyBillsEnabled, isCompanyBatchesEnabled } from '@/lib/companyTax';
 
 const Reports = () => {
   const navigate = useNavigate();
+  const { selectedCompany } = useCompany();
+  const billsEnabled = isCompanyBillsEnabled(selectedCompany);
+  const batchesEnabled = isCompanyBatchesEnabled(selectedCompany);
 
   const reportTypes = [
     {
@@ -71,19 +76,22 @@ const Reports = () => {
       title: 'Batch Summary',
       description: 'View batch-wise closing balances for selected items',
       icon: Package,
-      path: '/reports/batch-summary'
+      path: '/reports/batch-summary',
+      hidden: !batchesEnabled
     },
     {
       title: 'Outstanding Receivables',
       description: 'View pending customer payments',
       icon: TrendingUp,
-      path: '/reports/outstanding-receivable'
+      path: '/reports/outstanding-receivable',
+      hidden: !billsEnabled
     },
     {
       title: 'Outstanding Payables',
       description: 'View pending supplier payments',
       icon: TrendingDown,
-      path: '/reports/outstanding-payable'
+      path: '/reports/outstanding-payable',
+      hidden: !billsEnabled
     }
   ];
 
@@ -131,10 +139,12 @@ const Reports = () => {
                   <Package className="mr-2 h-4 w-4" />
                   Stock Summary
                 </Button>
-                <Button variant="outline" className="w-full justify-start" onClick={() => navigate('/reports/batch-summary')}>
-                  <Package className="mr-2 h-4 w-4" />
-                  Batch Summary
-                </Button>
+                {batchesEnabled && (
+                  <Button variant="outline" className="w-full justify-start" onClick={() => navigate('/reports/batch-summary')}>
+                    <Package className="mr-2 h-4 w-4" />
+                    Batch Summary
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -142,6 +152,7 @@ const Reports = () => {
           <div className="md:col-span-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {reportTypes.map((report, index) => (
+                report.hidden ? null :
                 <Card key={index} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(report.path)}>
                   <CardHeader>
                     <CardTitle className="flex items-center">

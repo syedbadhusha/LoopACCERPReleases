@@ -27,6 +27,9 @@ export interface VoucherTypeMeta {
   suffix: string;
   starting_number: number;
   is_system: boolean;
+  is_pos?: boolean;
+  print_after_save?: boolean;
+  print_title?: string;
 }
 
 // ─── Icon / colour map ────────────────────────────────────────────────────────
@@ -81,34 +84,66 @@ const VoucherWorkspace = () => {
   useEffect(() => {
     if (!selectedCompany) return;
     setLoading(true);
-    fetch(`${API_BASE_URL}/voucher-types?companyId=${selectedCompany.id}`)
-      .then(r => r.json())
-      .then(json => {
-        if (!json.success) return;
-        const types: VoucherTypeMeta[] = json.data || [];
-        setVoucherTypes(types);
 
-        // Priority: URL typeId > URL base_type > localStorage > system 'payment' > first
+    const run = async () => {
+      try {
+        const vtRes = await fetch(`${API_BASE_URL}/voucher-types?companyId=${selectedCompany.id}`);
+        const json = await vtRes.json();
+        if (!json.success) return;
+
+        const types: VoucherTypeMeta[] = json.data || [];
+        const nonPosTypes = types.filter(t => !t.is_pos);
+        setVoucherTypes(nonPosTypes);
+
+        // If editing, check the voucher FIRST — if it is a POS voucher, redirect to POS screen.
+        // We check is_pos on the voucher directly (fastest), then fall back to matching voucher_type_id
+        // against the loaded voucher types list (for older vouchers that predate the is_pos flag).
+        // This must complete before URL normalisation so there is no race condition.
+        if (editParam) {
+          try {
+            const vRes = await fetch(`${API_BASE_URL}/vouchers/${editParam}`);
+            const vJson = await vRes.json();
+            if (vJson.success && vJson.data) {
+              const v = vJson.data;
+              const isPosVoucher =
+                v.is_pos === true ||
+                (v.voucher_type_id && types.some(t => t.id === v.voucher_type_id && t.is_pos));
+              if (isPosVoucher) {
+                navigate(`/pos?edit=${editParam}`, { replace: true });
+                return; // stop – do not render VoucherForm
+              }
+            }
+          } catch {
+            // ignore – fall through to normal form
+          }
+        }
+
+        // Not a POS voucher (or no edit param) – proceed with normal type selection
         let target: VoucherTypeMeta | undefined;
-        if (typeIdParam) target = types.find(t => t.id === typeIdParam);
-        if (!target && baseTypeParam) target = types.find(t => t.base_type === baseTypeParam && t.is_system);
+        if (typeIdParam) target = nonPosTypes.find(t => t.id === typeIdParam);
+        if (!target && baseTypeParam) target = nonPosTypes.find(t => t.base_type === baseTypeParam && t.is_system);
         if (!target) {
           const lastId = localStorage.getItem(LAST_TYPE_KEY);
-          if (lastId) target = types.find(t => t.id === lastId);
+          if (lastId) target = nonPosTypes.find(t => t.id === lastId);
         }
-        if (!target) target = types.find(t => t.base_type === 'payment' && t.is_system);
-        if (!target) target = types[0];
+        if (!target) target = nonPosTypes.find(t => t.base_type === 'payment' && t.is_system);
+        if (!target) target = nonPosTypes[0];
 
         if (target) {
           setSelectedMeta(target);
           localStorage.setItem(LAST_TYPE_KEY, target.id);
           if (!typeIdParam || typeIdParam !== target.id) {
-            navigate(`/vouchers?typeId=${target.id}`, { replace: true });
+            navigate(`/vouchers?typeId=${target.id}${editParam ? `&edit=${editParam}` : ''}`, { replace: true });
           }
         }
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    run();
   }, [selectedCompany]);
 
   // Sync when URL typeId changes externally (e.g. edit link from another page)

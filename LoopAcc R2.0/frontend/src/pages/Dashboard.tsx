@@ -2,11 +2,19 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
+import { isCompanyBillsEnabled, isCompanyBatchesEnabled, isCompanyPOSEnabled } from '@/lib/companyTax';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import SalesChart from '@/components/dashboard/SalesChart';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { 
   BookOpen, 
   Package, 
@@ -20,7 +28,9 @@ import {
   FileText,
   Plus,
   ShoppingCart,
-  Subtitles
+  Subtitles,
+  Wallet,
+  PauseCircle,
 } from 'lucide-react';
 
 const Dashboard = () => {
@@ -34,8 +44,34 @@ const Dashboard = () => {
     totalPurchase: 0,
     outstandingReceivables: 0,
     outstandingPayables: 0,
+    cashBalance: 0,
+    bankBalance: 0,
+    cashGroupId: '',
+    bankGroupId: '',
   });
   const currencySymbol = selectedCompany?.currency === 'INR' ? '₹' : selectedCompany?.currency === 'USD' ? '$' : selectedCompany?.currency || '₹';
+  const billsEnabled = isCompanyBillsEnabled(selectedCompany);
+  const batchesEnabled = isCompanyBatchesEnabled(selectedCompany);
+  const posEnabled = isCompanyPOSEnabled(selectedCompany);
+
+  const [holdBillsOpen, setHoldBillsOpen] = useState(false);
+  const [holdVouchers, setHoldVouchers] = useState<any[]>([]);
+  const [holdLoading, setHoldLoading] = useState(false);
+
+  const openHoldBills = async () => {
+    if (!selectedCompany) return;
+    setHoldLoading(true);
+    setHoldBillsOpen(true);
+    try {
+      const res = await fetch(`http://localhost:5000/api/vouchers/report/held-pos?companyId=${selectedCompany.id}`);
+      const json = await res.json();
+      setHoldVouchers(json.data || []);
+    } catch {
+      toast({ title: 'Error', description: 'Could not load held bills', variant: 'destructive' });
+    } finally {
+      setHoldLoading(false);
+    }
+  };
   // Check for email confirmation
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -87,11 +123,37 @@ const Dashboard = () => {
         const totalSales = salesData.reduce((sum: number, v: any) => sum + Number(v.net_amount || 0), 0);
         const totalPurchase = purchaseData.reduce((sum: number, v: any) => sum + Number(v.net_amount || 0), 0);
 
+        // Fetch groups to get Cash-in-Hand / Bank Accounts IDs
+        const groupsResp = await fetch(`http://localhost:5000/api/groups?companyId=${selectedCompany.id}`);
+        const groupsJson = await groupsResp.json();
+        const allGroups: any[] = groupsJson?.data || [];
+        const cashGroup = allGroups.find((g: any) => g.name === 'Cash-in-Hand');
+        const bankGroup = allGroups.find((g: any) => g.name === 'Bank Accounts');
+
+        // Fetch current-date balance for cash/bank (all-time: opening + all transactions up to today)
+        const fyTo = new Date().toISOString().slice(0, 10);
+        const bsParams = new URLSearchParams({ companyId: selectedCompany.id, dateFrom: '1900-01-01', dateTo: fyTo });
+        const bsResp = await fetch(`http://localhost:5000/api/ledgers/report/balance-sheet?${bsParams}`);
+        const bsJson = await bsResp.json();
+        const allLedgers: any[] = bsJson?.data || [];
+        // opening is the master opening balance (signed); debit/credit are all-time transaction movements
+        const toLedgerBal = (l: any) => (l.opening || 0) + (l.debit || 0) - (l.credit || 0);
+        const cashBalance = allLedgers
+          .filter((l: any) => l.group?.name === 'Cash-in-Hand')
+          .reduce((sum: number, l: any) => sum + toLedgerBal(l), 0);
+        const bankBalance = allLedgers
+          .filter((l: any) => l.group?.name === 'Bank Accounts')
+          .reduce((sum: number, l: any) => sum + toLedgerBal(l), 0);
+
         setStats({
           totalSales,
           totalPurchase,
           outstandingReceivables: totalReceivables,
           outstandingPayables: totalPayables,
+          cashBalance,
+          bankBalance,
+          cashGroupId: cashGroup?.id || '',
+          bankGroupId: bankGroup?.id || '',
         });
       } catch (error) {
         console.error('Error fetching dashboard stats:', error);
@@ -128,6 +190,7 @@ const Dashboard = () => {
       title: 'Transactions',
       items: [
         { name: 'Vouchers', icon: FileText, path: '/vouchers' },
+        ...(posEnabled ? [{ name: 'POS', icon: ShoppingCart, path: '/pos' }] : []),
       ]
     },
     {
@@ -143,7 +206,7 @@ const Dashboard = () => {
         { name: 'Sales Register',icon: BookOpen,path: '/reports/sales-register' },
         { name: 'Purchase Register',icon: BookOpen,path: '/reports/purchase-register' },
         { name: 'Stock Summary',icon: BookOpen,path: '/reports/stock-summary' },
-        { name: 'Batch Summary',icon: BookOpen,path: '/reports/batch-summary' },
+        ...(batchesEnabled ? [{ name: 'Batch Summary',icon: BookOpen,path: '/reports/batch-summary' }] : []),
       ]
     }
   ];
@@ -151,8 +214,10 @@ const Dashboard = () => {
   const quickStats = [
     { title: 'Total Sales', value: `${currencySymbol} ${stats.totalSales.toFixed(2)}`, color: 'text-green-600', path: '/reports/sales-register' },
     { title: 'Total Purchase', value: `${currencySymbol} ${stats.totalPurchase.toFixed(2)}`, color: 'text-red-600', path: '/reports/purchase-register' },
-    { title: 'Outstanding Receivables', value: `${currencySymbol} ${stats.outstandingReceivables.toFixed(2)}`, color: 'text-blue-600', path: '/reports/outstanding-receivable' },
-    { title: 'Outstanding Payables', value: `${currencySymbol} ${stats.outstandingPayables.toFixed(2)}`, color: 'text-orange-600', path: '/reports/outstanding-payable' },
+    ...(billsEnabled ? [
+      { title: 'Outstanding Receivables', value: `${currencySymbol} ${stats.outstandingReceivables.toFixed(2)}`, color: 'text-blue-600', path: '/reports/outstanding-receivable' },
+      { title: 'Outstanding Payables', value: `${currencySymbol} ${stats.outstandingPayables.toFixed(2)}`, color: 'text-orange-600', path: '/reports/outstanding-payable' },
+    ] : []),
   ];
 
   return (
@@ -255,7 +320,7 @@ const Dashboard = () => {
           </div>
 
           {/* Quick Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-4">
             {quickStats.map((stat, index) => (
               <Card 
                 key={index}
@@ -272,6 +337,72 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             ))}
+            {/* Cash in Hand card */}
+            {stats.cashGroupId && (
+              <Card
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => {
+                  const fyYear = new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear();
+                  navigate(`/reports/group-summary?groupId=${stats.cashGroupId}&dateFrom=${fyYear}-04-01&dateTo=${new Date().toISOString().slice(0, 10)}`);
+                }}
+              >
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-sm flex items-center gap-1.5">
+                    <Wallet className="h-3.5 w-3.5 text-purple-600" />
+                    Cash in Hand
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <span className="text-2xl font-bold text-purple-600">
+                    {currencySymbol} {Math.abs(stats.cashBalance).toFixed(2)}
+                  </span>
+                  <p className="text-xs text-muted-foreground mt-1">Current Balance ({stats.cashBalance >= 0 ? 'Dr' : 'Cr'})</p>
+                </CardContent>
+              </Card>
+            )}
+            {/* Bank Accounts card */}
+            {stats.bankGroupId && (
+              <Card
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => {
+                  const fyYear = new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear();
+                  navigate(`/reports/group-summary?groupId=${stats.bankGroupId}&dateFrom=${fyYear}-04-01&dateTo=${new Date().toISOString().slice(0, 10)}`);
+                }}
+              >
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-sm flex items-center gap-1.5">
+                    <CreditCard className="h-3.5 w-3.5 text-blue-600" />
+                    Bank Accounts
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <span className="text-2xl font-bold text-blue-600">
+                    {currencySymbol} {Math.abs(stats.bankBalance).toFixed(2)}
+                  </span>
+                  <p className="text-xs text-muted-foreground mt-1">Current Balance ({stats.bankBalance >= 0 ? 'Dr' : 'Cr'})</p>
+                </CardContent>
+              </Card>
+            )}
+            {/* Hold Bills card — POS only */}
+            {posEnabled && (
+              <Card
+                className="cursor-pointer hover:shadow-md transition-shadow border-amber-200"
+                onClick={openHoldBills}
+              >
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-sm flex items-center gap-1.5">
+                    <PauseCircle className="h-3.5 w-3.5 text-amber-500" />
+                    Hold Bills
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl font-bold text-amber-500">POS</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">View &amp; resume held bills</p>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Charts */}
@@ -355,6 +486,50 @@ const Dashboard = () => {
           </div>
         </main>
       </div>
+
+      {/* Hold Bills Dialog */}
+      <Dialog open={holdBillsOpen} onOpenChange={setHoldBillsOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <PauseCircle className="h-4 w-4 text-amber-500" /> Hold Bills
+            </DialogTitle>
+          </DialogHeader>
+          {holdLoading ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
+          ) : holdVouchers.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">No held bills found.</p>
+          ) : (
+            <div className="divide-y max-h-80 overflow-y-auto">
+              {holdVouchers.map((v: any) => (
+                <div key={v.id} className="flex items-center justify-between py-2 px-1 hover:bg-muted/50 rounded">
+                  <div>
+                    <p className="text-sm font-medium">{v.voucher_number}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {v.voucher_date} · {currencySymbol}{Number(v.net_amount || 0).toFixed(2)} · {(v.inventory?.length || v.details?.length || 0)} item(s)
+                    </p>
+                    {v.narration && <p className="text-xs text-muted-foreground italic">{v.narration}</p>}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs"
+                    onClick={() => {
+                      setHoldBillsOpen(false);
+                      navigate(`/pos?edit=${v.id}`);
+                    }}
+                  >
+                    Open
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setHoldBillsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

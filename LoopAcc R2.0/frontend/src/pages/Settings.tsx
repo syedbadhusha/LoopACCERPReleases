@@ -10,6 +10,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 import { getCompanyTaxType, isCompanyTaxEnabled } from '@/lib/companyTax';
+import { API_BASE_URL } from '@/config/runtime';
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -37,7 +38,7 @@ const Settings = () => {
     currency_symbol: currencySymbol,
     gst_applicable: 'true',
     show_discount_column: 'false',
-    print_after_save: 'false',
+
     email_invoice: 'false'
   };
   const companyTaxType = getCompanyTaxType(selectedCompany);
@@ -65,7 +66,18 @@ const Settings = () => {
         });
       }
       
-      setSettings({ ...defaultSettings, ...settingsMap });
+      const merged = { ...defaultSettings, ...settingsMap };
+      setSettings(merged);
+
+      // Sync the latest settings from DB into the company context so all forms
+      // (payment/receipt etc.) immediately reflect the correct enable_bills value
+      // without needing to call updateSetting first.
+      updateSelectedCompany({
+        settings: {
+          ...(selectedCompany.settings || {}),
+          ...settingsMap,
+        } as any,
+      });
     } catch (error) {
       console.error('Error fetching settings:', error);
     }
@@ -267,18 +279,99 @@ const Settings = () => {
                   </div>
                   <Switch 
                     checked={settings.show_discount_column === 'true'}
-                    onCheckedChange={(checked) => updateSetting('show_discount_column', checked.toString())}
+                    onCheckedChange={(checked) => {
+                      updateSetting('show_discount_column', checked.toString());
+                      if (!checked) updateSetting('discount_entry_mode', 'percent');
+                    }}
                   />
                 </div>
-                
+
+                {settings.show_discount_column === 'true' && (
+                  <div className="flex items-center justify-between pl-4 border-l-2 border-muted">
+                    <div>
+                      <Label>Discount Entry Mode</Label>
+                      <p className="text-sm text-muted-foreground">Which field the user types into manually</p>
+                    </div>
+                    <Select
+                      value={settings.discount_entry_mode || 'percent'}
+                      onValueChange={(val) => updateSetting('discount_entry_mode', val)}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="percent">Percentage (%)</SelectItem>
+                        <SelectItem value="amount">Amount</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label>Print After Save</Label>
-                    <p className="text-sm text-muted-foreground">Automatically print documents after saving</p>
+                    <Label>Enable Bill-wise Allocation</Label>
+                    <p className="text-sm text-muted-foreground">Allow bill-by-bill tracking in payment/receipt vouchers and ledger master</p>
                   </div>
-                  <Switch 
-                    checked={settings.print_after_save === 'true'}
-                    onCheckedChange={(checked) => updateSetting('print_after_save', checked.toString())}
+                  <Switch
+                    checked={settings.enable_bills !== 'false'}
+                    onCheckedChange={async (checked) => {
+                      if (!checked && selectedCompany) {
+                        const resp = await fetch(`http://localhost:5000/api/bills/has-bills?companyId=${selectedCompany.id}`);
+                        const json = await resp.json();
+                        if (json.hasBills) {
+                          toast({ title: 'Cannot disable', description: `${json.count} bill(s) already exist. Delete all bills before disabling.`, variant: 'destructive' });
+                          return;
+                        }
+                      }
+                      updateSetting('enable_bills', checked.toString());
+                    }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Enable Batch Tracking</Label>
+                    <p className="text-sm text-muted-foreground">Allow batch-wise stock tracking in item master and inventory vouchers</p>
+                  </div>
+                  <Switch
+                    checked={settings.enable_batches !== 'false'}
+                    onCheckedChange={async (checked) => {
+                      if (!checked && selectedCompany) {
+                        const resp = await fetch(`http://localhost:5000/api/batch-allocations/has-batches?companyId=${selectedCompany.id}`);
+                        const json = await resp.json();
+                        if (json.hasBatches) {
+                          toast({ title: 'Cannot disable', description: `${json.count} batch record(s) already exist. Delete all batch records before disabling.`, variant: 'destructive' });
+                          return;
+                        }
+                      }
+                      updateSetting('enable_batches', checked.toString());
+                    }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Enable POS Module</Label>
+                    <p className="text-sm text-muted-foreground">Enables the POS screen in Transactions and POS mode in Voucher Type Master</p>
+                  </div>
+                  <Switch
+                    checked={settings.enable_pos === 'true'}
+                    onCheckedChange={async (checked) => {
+                      if (!checked && selectedCompany) {
+                        const resp = await fetch(`${API_BASE_URL}/voucher-types?companyId=${selectedCompany.id}`);
+                        const json = await resp.json();
+                        const hasPosTypes = (json.data || []).some((vt: any) => vt.is_pos);
+                        if (hasPosTypes) {
+                          toast({
+                            title: 'Cannot disable',
+                            description: 'One or more voucher types have POS mode enabled. Disable POS mode on all voucher types first.',
+                            variant: 'destructive',
+                          });
+                          return;
+                        }
+                      }
+                      updateSetting('enable_pos', checked.toString());
+                    }}
                   />
                 </div>
                 

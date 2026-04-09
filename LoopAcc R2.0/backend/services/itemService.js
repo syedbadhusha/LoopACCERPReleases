@@ -137,6 +137,7 @@ export async function getItemsByCompany(companyId) {
           id: 1,
           name: 1,
           code: 1,
+          alias: 1,
           description: 1,
           company_id: 1,
           uom_id: 1,
@@ -145,6 +146,10 @@ export async function getItemsByCompany(companyId) {
           stock_groups: 1,
           stock_category_id: 1,
           stock_categories: 1,
+          hsn_code: 1,
+          image: 1,
+          standard_rates: 1,
+          // Derived convenience fields from latest standard rate entry
           purchase_rate: 1,
           sales_rate: 1,
           reorder_level: 1,
@@ -181,9 +186,22 @@ export async function createItem(doc) {
   const db = getDb();
   const id = doc.id || uuidv4();
 
+  // Case-insensitive name uniqueness check
+  if (doc.name && doc.company_id) {
+    const nameDup = await db.collection("item_master").findOne({
+      company_id: doc.company_id,
+      name: { $regex: new RegExp(`^${doc.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+    });
+    if (nameDup) {
+      const err = new Error(`Item "${doc.name}" already exists`);
+      err.statusCode = 409;
+      throw err;
+    }
+  }
+
   // Separate batch_details and enable_batches from item data
   // These should NOT be spread into itemData
-  const { batch_details, enable_batches, ...itemData } = doc;
+  const { batch_details, enable_batches, standard_rates, ...itemData } = doc;
 
   // Set enable_batches based on user's explicit selection
   // If not provided, default to false (without batch)
@@ -199,6 +217,14 @@ export async function createItem(doc) {
   // Ensure enable_batches is NOT in itemData
   delete itemData?.enable_batches;
 
+  // Build standard_rates array and derive purchase_rate / sales_rate from latest entry
+  const normalizedRates = Array.isArray(standard_rates)
+    ? [...standard_rates].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    : [];
+  const latestRate = normalizedRates[0];
+  const derivedPurchaseRate = latestRate ? toNumber(latestRate.cost, 0) : toNumber(itemData.purchase_rate, 0);
+  const derivedSalesRate = latestRate ? toNumber(latestRate.rate, 0) : toNumber(itemData.sales_rate, 0);
+
   const openingStock = toNumber(itemData?.opening_stock ?? itemData?.opening_qty, 0);
   const openingRate = toNumber(itemData?.opening_rate, 0);
   const openingValue =
@@ -209,6 +235,9 @@ export async function createItem(doc) {
   const toInsert = {
     id,
     ...itemData,
+    standard_rates: normalizedRates,
+    purchase_rate: derivedPurchaseRate,
+    sales_rate: derivedSalesRate,
     enable_batches: shouldEnableBatches,
     opening_stock: openingStock,
     opening_rate: openingRate,
@@ -310,8 +339,22 @@ export async function updateItem(id, update) {
   const existingItem = await db.collection("item_master").findOne({ id });
   if (!existingItem) throw new Error("Item not found");
 
-  // Separate batch_details and enable_batches from update data
-  const { batch_details, enable_batches, ...itemUpdate } = update;
+  // Case-insensitive name uniqueness check (skip if name unchanged)
+  if (update.name && update.name.trim().toLowerCase() !== (existingItem.name || '').toLowerCase()) {
+    const nameDup = await db.collection("item_master").findOne({
+      company_id: existingItem.company_id,
+      name: { $regex: new RegExp(`^${update.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      id: { $ne: id },
+    });
+    if (nameDup) {
+      const err = new Error(`Item "${update.name}" already exists`);
+      err.statusCode = 409;
+      throw err;
+    }
+  }
+
+  // Separate batch_details, enable_batches and standard_rates from update data
+  const { batch_details, enable_batches, standard_rates, ...itemUpdate } = update;
 
   assertUniqueBatchNumbers(batch_details);
 
@@ -322,6 +365,19 @@ export async function updateItem(id, update) {
   } else {
     // If not provided, remove any existing enable_batches from itemUpdate
     delete itemUpdate?.enable_batches;
+  }
+
+  // Update standard_rates and derive purchase_rate/sales_rate from latest entry
+  if (Array.isArray(standard_rates)) {
+    const sortedRates = [...standard_rates].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    itemUpdate.standard_rates = sortedRates;
+    const latestRate = sortedRates[0];
+    if (latestRate) {
+      itemUpdate.purchase_rate = toNumber(latestRate.cost, 0);
+      itemUpdate.sales_rate = toNumber(latestRate.rate, 0);
+    }
   }
 
   const res = await db

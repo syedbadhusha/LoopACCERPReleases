@@ -62,6 +62,7 @@ interface BatchAllocationDialogProps {
   initialAllocations?: BatchAllocationData[]; // For editing existing allocations
   itemData?: any; // Item data for tax rate
   companySettings?: any; // Company settings for discount enabled
+  maxAllocations?: number; // Limit number of batch lines (e.g. 1 for POS)
 }
 
 export const BatchAllocationDialog = ({
@@ -76,6 +77,7 @@ export const BatchAllocationDialog = ({
   initialAllocations,
   itemData,
   companySettings,
+  maxAllocations,
 }: BatchAllocationDialogProps) => {
   const CREATE_NEW_BATCH_VALUE = "__create_new_batch__";
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -466,7 +468,14 @@ export const BatchAllocationDialog = ({
           {/* Batch Selection Form */}
           {batchesEnabled && (
             <div className="border rounded-lg p-4 bg-gray-50">
-              <h3 className="font-semibold mb-3">Add Batch Allocation</h3>
+              <h3 className="font-semibold mb-3">
+                Add Batch Allocation
+                {maxAllocations !== undefined && allocations.length >= maxAllocations && (
+                  <span className="ml-2 text-xs font-normal text-orange-600">
+                    (Max {maxAllocations} batch{maxAllocations !== 1 ? 'es' : ''} — remove existing to change)
+                  </span>
+                )}
+              </h3>
 
               <div className="space-y-3">
                 {/* Batch Select - Single Row */}
@@ -574,7 +583,8 @@ export const BatchAllocationDialog = ({
                         !selectedBatch ||
                         batchQty <= 0 ||
                         //batchQty > availableQty ||
-                        loading
+                        loading ||
+                        (maxAllocations !== undefined && allocations.length >= maxAllocations)
                       }
                       className="w-full h-9"
                     >

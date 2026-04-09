@@ -13,6 +13,7 @@ import BillAllocationDialog from '@/components/BillAllocationDialog';
 import QuickCreateLedgerDialog from '@/components/QuickCreateLedgerDialog';
 import { API_BASE_URL } from '@/config/runtime';
 import type { VoucherTypeMeta } from './VoucherForm';
+import { isCompanyBillsEnabled } from '@/lib/companyTax';
 
 const API_HOST_URL = API_BASE_URL.replace(/\/api$/, '');
 
@@ -41,6 +42,7 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
   const returnTo = location.state?.returnTo;
   const { toast } = useToast();
   const { selectedCompany } = useCompany();
+  const billsEnabled = isCompanyBillsEnabled(selectedCompany);
   const [loading, setLoading] = useState(false);
   const [ledgers, setLedgers] = useState<any[]>([]);
   const [savedVoucher, setSavedVoucher] = useState<any>(null);
@@ -160,7 +162,7 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
       let startingNumber = 1;
 
       if (voucherTypeMeta) {
-        prefix = voucherTypeMeta.prefix;
+        prefix = voucherTypeMeta.prefix || defaultPrefix;
         suffix = voucherTypeMeta.suffix || '';
         startingNumber = voucherTypeMeta.starting_number || 1;
       } else {
@@ -180,15 +182,19 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
       const vouchersJson = await vouchersResp.json();
       let nextNumber = startingNumber;
       if (vouchersJson?.success) {
-        const filtered = (vouchersJson.data || []).filter((v: any) => v.voucher_type === voucherType);
+        const allVouchers = vouchersJson.data || [];
+        // Filter by voucher_type_id when available (more accurate); fall back to base type
+        const filtered = voucherTypeMeta?.id
+          ? allVouchers.filter((v: any) => v.voucher_type_id === voucherTypeMeta.id)
+          : allVouchers.filter((v: any) => v.voucher_type === voucherType);
         filtered.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         if (filtered.length > 0) {
           const lastVoucher = filtered[0];
           let stripped = String(lastVoucher.voucher_number || '');
           if (prefix && stripped.startsWith(prefix)) stripped = stripped.slice(prefix.length);
           if (suffix && stripped.endsWith(suffix)) stripped = stripped.slice(0, stripped.length - suffix.length);
-          const parsed = parseInt(stripped) || startingNumber;
-          nextNumber = parsed + 1;
+          const parsed = parseInt(stripped);
+          if (!isNaN(parsed)) nextNumber = Math.max(startingNumber, parsed + 1);
         }
       }
 
@@ -305,6 +311,7 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
         company_id: selectedCompany.id,
         voucher_type: voucherType as 'payment' | 'receipt',
         voucher_type_id: voucherTypeMeta?.id || undefined,
+        is_pos: voucherTypeMeta?.is_pos || false,
         ledger_id: ledgerEntries[0]?.ledger_id || '',
         total_amount: totalAmount,
         tax_amount: 0,
@@ -390,7 +397,9 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
           : `${isPayment ? 'Payment' : 'Receipt'} created successfully!`
       });
 
-      setTimeout(() => handlePrint(voucher), 500);
+      if (voucherTypeMeta?.print_after_save) {
+        setTimeout(() => handlePrint(voucher), 500);
+      }
 
       if (returnTo) {
         navigate(returnTo);
@@ -431,48 +440,124 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
     if (!printWindow) return;
 
     const totalNet = getTotalAmount();
-    const title = isPayment ? 'PAYMENT VOUCHER' : 'RECEIPT VOUCHER';
-    const cashBankName = ledgers.find(l => l.id === formData.cash_bank_ledger_id)?.name || '';
+
+    const defaultTitle = isPayment ? 'Payment Voucher' : 'Receipt Voucher';
+    const printTitle = (voucherTypeMeta?.print_title?.trim()) || defaultTitle;
+
+    const cashBankLedger = ledgers.find(l => l.id === formData.cash_bank_ledger_id);
+    const cashBankName = cashBankLedger?.name || '';
+
+    // Full number-to-words
+    const numberToWordsFull = (value: number): string => {
+      const ones = ['Zero','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+      const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+      const integerToWords = (num: number): string => {
+        if (num < 20) return ones[num];
+        if (num < 100) return `${tens[Math.floor(num / 10)]}${num % 10 ? ' ' + ones[num % 10] : ''}`;
+        if (num < 1000) return `${ones[Math.floor(num / 100)]} Hundred${num % 100 ? ' ' + integerToWords(num % 100) : ''}`;
+        if (num < 100000) return `${integerToWords(Math.floor(num / 1000))} Thousand${num % 1000 ? ' ' + integerToWords(num % 1000) : ''}`;
+        if (num < 10000000) return `${integerToWords(Math.floor(num / 100000))} Lakh${num % 100000 ? ' ' + integerToWords(num % 100000) : ''}`;
+        return `${integerToWords(Math.floor(num / 10000000))} Crore${num % 10000000 ? ' ' + integerToWords(num % 10000000) : ''}`;
+      };
+      const abs = Math.abs(Number(value) || 0);
+      const rupees = Math.floor(abs);
+      const paise = Math.round((abs - rupees) * 100);
+      return `${value < 0 ? 'Minus ' : ''}${rupees === 0 ? 'Zero' : integerToWords(rupees)} Rupees${paise > 0 ? ' and ' + integerToWords(paise) + ' Paise' : ''} Only`;
+    };
+
+    const formatAmt = (val: number) => {
+      const abs = Math.abs(Number(val || 0));
+      const formatted = abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return Number(val) < 0 ? `-${formatted}` : formatted;
+    };
+
+    const partyRows = ledgerEntries
+      .filter(e => e.ledger_id && e.amount > 0)
+      .map(e => {
+        const name = ledgers.find(l => l.id === e.ledger_id)?.name || '';
+        return `<tr>
+          <td class="desc">${name}</td>
+          <td class="amt">${formatAmt(e.amount)}</td>
+        </tr>`;
+      }).join('');
 
     printWindow.document.write(`
-      <html>
-        <head>
-          <title>${isPayment ? 'Payment' : 'Receipt'} Voucher - ${voucher.voucher_number}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-            .details { margin: 20px 0; }
-            .amount-box { border: 2px solid #000; padding: 20px; margin: 20px 0; text-align: center; }
-            .signature { margin-top: 50px; display: flex; justify-content: space-between; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>${selectedCompany?.name}</h1>
-            <h2>${title}</h2>
-          </div>
-          <div class="details">
-            <p><strong>Voucher No:</strong> ${voucher.voucher_number}</p>
-            <p><strong>Date:</strong> ${voucher.voucher_date}</p>
-            <p><strong>${isPayment ? 'Pay From' : 'Received In'}:</strong> ${cashBankName}</p>
-            ${ledgerEntries.map(e => `<p><strong>${isPayment ? 'Paid To' : 'Received From'}:</strong> ${ledgers.find(l => l.id === e.ledger_id)?.name || ''} - ${currencySymbol} ${e.amount.toFixed(2)}</p>`).join('')}
-            <p><strong>Narration:</strong> ${voucher.narration || (isPayment ? 'Payment Entry' : 'Receipt Entry')}</p>
-          </div>
-          <div class="amount-box">
-            <h3>Amount ${isPayment ? 'Paid' : 'Received'}: ${currencySymbol} ${totalNet.toFixed(2)}</h3>
-            <p>Amount in Words: ${numberToWords(totalNet)}</p>
-          </div>
-          <div class="signature">
-            <div>Prepared By: _______________</div>
-            <div>Approved By: _______________</div>
-            <div>${isPayment ? 'Paid By' : 'Received By'}: _______________</div>
-          </div>
-        </body>
-      </html>
+      <html><head>
+        <title>${printTitle} - ${voucher.voucher_number}</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #000; padding: 20px; }
+          .company-name { font-size: 16px; font-weight: 700; }
+          .company-sub  { font-size: 11px; }
+          .divider { border-top: 1px solid #000; margin: 6px 0; }
+          .title-row { display: flex; justify-content: space-between; align-items: center; margin: 8px 0 4px; }
+          .print-title { font-size: 15px; font-weight: 700; text-decoration: underline; }
+          .no-date { font-size: 12px; }
+          table.main { width: 100%; border-collapse: collapse; margin-top: 4px; }
+          table.main th, table.main td { border: 1px solid #000; padding: 4px 6px; }
+          table.main th { font-size: 12px; font-weight: 600; }
+          .desc { width: 75%; }
+          .amt  { width: 25%; text-align: right; white-space: nowrap; }
+          .section-label { font-weight: 700; font-size: 11px; padding: 3px 6px; border: 1px solid #000; border-bottom: none; background: #f5f5f5; }
+          .through-row td { font-style: italic; }
+          .words-row td { font-weight: 700; border-top: none; }
+          .total-row td { font-weight: 700; font-size: 13px; border-top: 2px solid #000; }
+          .sign-area { margin-top: 30px; text-align: right; font-size: 12px; }
+          .footer-row { display: flex; justify-content: space-between; margin-top: 40px; font-size: 11px; border-top: 1px solid #000; padding-top: 6px; }
+          .footer-col { width: 33%; }
+        </style>
+      </head><body>
+        <div class="company-name">${selectedCompany?.name || ''}</div>
+        <div class="company-sub">State Name : ${(selectedCompany as any)?.state || ''}, Code : ${(selectedCompany as any)?.state_code || ''}</div>
+        <div class="company-sub">E-Mail : ${(selectedCompany as any)?.email || ''}</div>
+        <div class="divider"></div>
+
+        <div class="title-row">
+          <span class="print-title">${printTitle}</span>
+          <span class="no-date">No. : &nbsp;${voucher.voucher_number}&nbsp;&nbsp;&nbsp;&nbsp;Dated : &nbsp;${voucher.voucher_date}</span>
+        </div>
+
+        <table class="main">
+          <thead>
+            <tr>
+              <th class="desc">Particulars</th>
+              <th class="amt">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="desc" colspan="2" style="padding:2px 6px;font-weight:700">Account:</td></tr>
+            ${partyRows}
+            <tr class="through-row">
+              <td class="desc" style="font-weight:700">Through:</td>
+              <td class="amt"></td>
+            </tr>
+            <tr class="through-row">
+              <td class="desc" style="padding-left:12px">${cashBankName}</td>
+              <td class="amt"></td>
+            </tr>
+            <tr class="words-row">
+              <td class="desc" colspan="2">Amount (in words)<br/><strong>INR ${numberToWordsFull(totalNet)}</strong></td>
+            </tr>
+            <tr class="total-row">
+              <td class="desc" style="text-align:right">&#8377;</td>
+              <td class="amt">${formatAmt(totalNet)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="sign-area">Authorised Signatory</div>
+
+        <div class="footer-row">
+          <div class="footer-col">Prepared by</div>
+          <div class="footer-col" style="text-align:center">Checked by</div>
+          <div class="footer-col" style="text-align:right">Verified by</div>
+        </div>
+      </body></html>
     `);
 
     printWindow.document.close();
-    printWindow.print();
+    printWindow.focus();
+    setTimeout(() => { try { printWindow.print(); } catch {} }, 100);
   };
 
   const handleLedgerCreated = (ledger: { id: string; name: string; group_name: string; tax_type?: string }) => {
@@ -551,9 +636,9 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                   <Label>Voucher Number</Label>
                   <Input
                     value={formData.voucher_number}
-                    onChange={(e) => setFormData({ ...formData, voucher_number: e.target.value })}
-                    placeholder="Enter voucher number"
-                    required
+                    readOnly
+                    className="bg-muted cursor-not-allowed"
+                    placeholder="Auto-generated"
                   />
                 </div>
 
@@ -655,20 +740,24 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                   </div>
 
                   <div className="mt-4 space-y-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openBillAllocation(entry)}
-                      disabled={!entry.ledger_id || !isBillwiseLedger(entry.ledger_id)}
-                    >
-                      <FileText className="h-4 w-4 mr-2" />
-                      Allocate Bills ({entry.billAllocations.length})
-                    </Button>
-                    {entry.billAllocations.length > 0 && (
-                      <div className="text-sm text-muted-foreground">
-                        Allocated: {currencySymbol} {entry.billAllocations.reduce((sum, a) => sum + a.allocated_amount, 0).toFixed(2)} across {entry.billAllocations.length} bill(s)
-                      </div>
+                    {billsEnabled && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openBillAllocation(entry)}
+                          disabled={!entry.ledger_id || !isBillwiseLedger(entry.ledger_id)}
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          Allocate Bills ({entry.billAllocations.length})
+                        </Button>
+                        {entry.billAllocations.length > 0 && (
+                          <div className="text-sm text-muted-foreground">
+                            Allocated: {currencySymbol} {entry.billAllocations.reduce((sum, a) => sum + a.allocated_amount, 0).toFixed(2)} across {entry.billAllocations.length} bill(s)
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

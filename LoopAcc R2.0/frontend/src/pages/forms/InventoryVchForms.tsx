@@ -9,12 +9,30 @@ import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, Plus, Trash2, Printer, Package } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
-import { getCompanyTaxLabel, getCompanyTaxType, isCompanyTaxEnabled } from '@/lib/companyTax';
+import { getCompanyTaxLabel, getCompanyTaxType, isCompanyTaxEnabled, isCompanyBatchesEnabled } from '@/lib/companyTax';
 import { BatchSelectionDialog } from '@/components/BatchSelectionDialog';
 import { BatchAllocationDialog } from '@/components/BatchAllocationDialog';
 import QuickCreateLedgerDialog from '@/components/QuickCreateLedgerDialog';
 import QuickCreateItemDialog from '@/components/QuickCreateItemDialog';
 import type { VoucherTypeMeta } from './VoucherForm';
+
+/** Returns the effective rate (sales or purchase cost) for an item as of a given date. */
+function getEffectiveItemRate(item: any, isSales: boolean, forDate?: string): number {
+  const dateStr = forDate || new Date().toISOString().split('T')[0];
+  const standardRates: { date: string; cost: number; rate: number }[] = item.standard_rates || [];
+  if (standardRates.length > 0) {
+    const applicable = standardRates
+      .filter(r => r.date <= dateStr)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (applicable.length > 0) {
+      return isSales ? (Number(applicable[0].rate) || 0) : (Number(applicable[0].cost) || 0);
+    }
+    // All rates are future — take the earliest
+    const sorted = [...standardRates].sort((a, b) => a.date.localeCompare(b.date));
+    return isSales ? (Number(sorted[0].rate) || 0) : (Number(sorted[0].cost) || 0);
+  }
+  return isSales ? (item.sales_rate || 0) : (item.purchase_rate || 0);
+}
 
 interface InventoryItem {
   id: string;
@@ -58,6 +76,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
   const { selectedCompany } = useCompany();
   const isTaxEnabled = isCompanyTaxEnabled(selectedCompany);
   const companyTaxType = getCompanyTaxType(selectedCompany);
+  const companyBatchesEnabled = isCompanyBatchesEnabled(selectedCompany);
   const [loading, setLoading] = useState(false);
 
   const actualVoucherType = voucherType || 'sales';
@@ -109,6 +128,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
   const [savedVoucher, setSavedVoucher] = useState<any>(null);
   const [itemSearchByRow, setItemSearchByRow] = useState<Record<string, string>>({});
   const [showDiscountColumn, setShowDiscountColumn] = useState(false);
+  const [discountEntryMode, setDiscountEntryMode] = useState<'percent' | 'amount'>('percent');
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [batchAllocationDialogOpen, setBatchAllocationDialogOpen] = useState(false);
   const [selectedItemForBatch, setSelectedItemForBatch] = useState<{
@@ -118,6 +138,8 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
   const [quickCreateLedgerOpen, setQuickCreateLedgerOpen] = useState(false);
   const [quickCreateLedgerDefaultGroup, setQuickCreateLedgerDefaultGroup] = useState<string | undefined>(undefined);
   const [quickCreateItemOpen, setQuickCreateItemOpen] = useState(false);
+  const [originalDocId, setOriginalDocId] = useState('');
+  const [originalVouchers, setOriginalVouchers] = useState<any[]>([]);
 
   useEffect(() => {
     if (!selectedCompany) return;
@@ -135,6 +157,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
   useEffect(() => {
     if (selectedCompany?.settings) {
       setShowDiscountColumn(selectedCompany.settings.show_discount_column === 'true');
+      setDiscountEntryMode(
+        selectedCompany.settings.discount_entry_mode === 'amount' ? 'amount' : 'percent'
+      );
     }
   }, [selectedCompany]);
 
@@ -148,7 +173,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       let startingNumber = 1;
 
       if (voucherTypeMeta) {
-        prefix = voucherTypeMeta.prefix;
+        prefix = voucherTypeMeta.prefix || prefix;
         suffix = voucherTypeMeta.suffix || '';
         startingNumber = voucherTypeMeta.starting_number || 1;
       } else {
@@ -181,15 +206,18 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       if (vouchersResponse.ok) {
         const vouchersResult = await vouchersResponse.json();
         const allVouchers = vouchersResult.data || [];
-        const lastVoucher = allVouchers
-          .filter((v: any) => v.voucher_type === actualVoucherType)
+        // Filter by voucher_type_id when available (more accurate); fall back to base type
+        const typeVouchers = voucherTypeMeta?.id
+          ? allVouchers.filter((v: any) => v.voucher_type_id === voucherTypeMeta.id)
+          : allVouchers.filter((v: any) => v.voucher_type === actualVoucherType);
+        const lastVoucher = typeVouchers
           .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
         if (lastVoucher) {
           let stripped = String(lastVoucher.voucher_number || '');
           if (prefix && stripped.startsWith(prefix)) stripped = stripped.slice(prefix.length);
           if (suffix && stripped.endsWith(suffix)) stripped = stripped.slice(0, stripped.length - suffix.length);
           const parsed = parseInt(stripped);
-          if (!isNaN(parsed)) nextNumber = parsed + 1;
+          if (!isNaN(parsed)) nextNumber = Math.max(startingNumber, parsed + 1);
         }
       }
       setFormData(prev => ({ ...prev, voucher_number: `${prefix}${nextNumber.toString().padStart(4, '0')}${suffix}` }));
@@ -202,12 +230,14 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
     if (!selectedCompany) return [];
     let ledgersWithGroupNames: any[] = [];
     try {
-      const [ledgersRes, itemsRes] = await Promise.all([
+      const [ledgersRes, itemsRes, vouchersRes] = await Promise.all([
         fetch(`http://localhost:5000/api/ledgers?companyId=${selectedCompany.id}`),
         fetch(`http://localhost:5000/api/items?companyId=${selectedCompany.id}`),
+        fetch(`http://localhost:5000/api/vouchers?companyId=${selectedCompany.id}`),
       ]);
       const ledgersJson = await ledgersRes.json();
       const itemsJson = await itemsRes.json();
+      const vouchersJson = await vouchersRes.json();
       if (ledgersJson.success && ledgersJson.data) {
         ledgersWithGroupNames = ledgersJson.data.map((ledger: any) => ({
           ...ledger,
@@ -218,6 +248,12 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       }
       if (itemsJson.success && itemsJson.data) {
         setItems(itemsJson.data);
+      }
+      if (vouchersJson.data) {
+        // For credit-note: show sales vouchers; for debit-note: show purchase vouchers
+        const sourceType = isSales ? 'sales' : 'purchase';
+        const filtered = (vouchersJson.data as any[]).filter(v => v.voucher_type === sourceType);
+        setOriginalVouchers(filtered);
       }
     } catch (error) {
       console.error('Error fetching initial data:', error);
@@ -261,6 +297,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         tax_amount: voucher.tax_amount,
         net_amount: voucher.net_amount,
       });
+      if (voucher.original_doc_id) setOriginalDocId(voucher.original_doc_id);
 
       let loadedItemsData: InventoryItem[] = [];
       if (itemDetails.length > 0) {
@@ -329,13 +366,34 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
     }
   };
 
-  const calculateItemAmounts = (item: InventoryItem): InventoryItem => {
-    const amount = item.quantity * item.rate;
-    const discountAmount = (amount * item.discount_percent) / 100;
-    const discountedAmount = amount - discountAmount;
+  // Pass changedField='discount_amount' when the user edited the amount directly,
+  // so we back-compute the percent; otherwise we derive amount from percent.
+  const calculateItemAmounts = (item: InventoryItem, changedField?: string): InventoryItem => {
+    let gross = item.quantity * item.rate;
+    let discountAmount: number;
+    let discountPercent: number;
+    let amount: number;
+    let computedRate = item.rate;
+    if (changedField === 'amount') {
+      // User typed amount directly — back-compute rate
+      amount = Number(item.amount) || 0;
+      discountPercent = Number(item.discount_percent) || 0;
+      const factor = discountPercent < 100 ? 1 - discountPercent / 100 : 1;
+      gross = factor > 0 ? amount / factor : amount;
+      computedRate = item.quantity > 0 ? gross / item.quantity : item.rate;
+      discountAmount = gross - amount;
+    } else if (changedField === 'discount_amount') {
+      discountAmount = Math.min(Number(item.discount_amount) || 0, gross);
+      discountPercent = gross > 0 ? (discountAmount / gross) * 100 : 0;
+      amount = gross - discountAmount;
+    } else {
+      discountPercent = Number(item.discount_percent) || 0;
+      discountAmount = (gross * discountPercent) / 100;
+      amount = gross - discountAmount;
+    }
 
     if (!isTaxEnabled) {
-      return { ...item, amount, discount_amount: discountAmount, tax_percent: 0, tax_amount: 0, net_amount: discountedAmount };
+      return { ...item, rate: computedRate, amount, discount_percent: discountPercent, discount_amount: discountAmount, tax_percent: 0, tax_amount: 0, net_amount: amount };
     }
 
     let applicableTaxRate = item.tax_percent || 0;
@@ -348,9 +406,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         applicableTaxRate = item.itemData.tax_rate || 0;
       }
     }
-    const tax_amount = (discountedAmount * applicableTaxRate) / 100;
-    const net_amount = discountedAmount + tax_amount;
-    return { ...item, amount, discount_amount: discountAmount, tax_percent: applicableTaxRate, tax_amount, net_amount };
+    const tax_amount = (amount * applicableTaxRate) / 100;
+    const net_amount = amount + tax_amount;
+    return { ...item, rate: computedRate, amount, discount_percent: discountPercent, discount_amount: discountAmount, tax_percent: applicableTaxRate, tax_amount, net_amount };
   };
 
   const calculateTaxByType = (itemsToCalc: InventoryItem[], taxType: string) => {
@@ -394,7 +452,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       const selectedItem = items.find(item => item.id === value);
       if (selectedItem) {
         newItems[index].tax_percent = selectedItem.tax_rate || 0;
-        newItems[index].rate = isSales ? (selectedItem.sales_rate || 0) : (selectedItem.purchase_rate || 0);
+        newItems[index].rate = getEffectiveItemRate(selectedItem, isSales, formData.voucher_date);
         newItems[index].itemData = {
           cgst_rate: selectedItem.cgst_rate || 0,
           sgst_rate: selectedItem.sgst_rate || 0,
@@ -403,7 +461,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         };
       }
     }
-    newItems[index] = calculateItemAmounts(newItems[index]);
+    // Determine which field was directly edited for back-calculation
+    const changedField = field === 'discount_amount' ? 'discount_amount' : field === 'amount' ? 'amount' : undefined;
+    newItems[index] = calculateItemAmounts(newItems[index], changedField);
     setInventoryItems(newItems);
     const updatedTaxLedgers = updateTaxLedgersAutomatically(newItems, additionalLedgers);
     calculateTotals(newItems, updatedTaxLedgers);
@@ -435,8 +495,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
   };
 
   const calculateTotals = (itemsArr: InventoryItem[], ledgersArr: AdditionalLedgerEntry[] = additionalLedgers) => {
+    // item.amount is now the post-discount taxable base, so sum directly
     const items_subtotal = itemsArr.reduce(
-      (sum, item) => sum + (Number(item.amount || 0) - Number(item.discount_amount || 0)),
+      (sum, item) => sum + Number(item.amount || 0),
       0
     );
     const taxLedgerAmount = isTaxEnabled ? ledgersArr.reduce((sum, entry) => {
@@ -618,8 +679,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
 
     setLoading(true);
     try {
+      // item.amount is the post-discount taxable base
       const itemsSubtotal = inventoryItems.reduce(
-        (sum, item) => sum + (Number(item.amount || 0) - Number(item.discount_amount || 0)),
+        (sum, item) => sum + Number(item.amount || 0),
         0
       );
 
@@ -695,9 +757,11 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         id: editVoucherId || undefined,
         ...formData,
         reference_date: formData.reference_date || null,
+        original_doc_id: originalDocId || null,
         company_id: selectedCompany.id,
         voucher_type: actualVoucherType,
         voucher_type_id: voucherTypeMeta?.id || undefined,
+        is_pos: voucherTypeMeta?.is_pos || false,
         details: voucherDetails,
         ledger_entries: ledgerEntries.filter(e => e.ledger_id),
       };
@@ -721,7 +785,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       setSavedVoucher(voucher);
       toast({ title: 'Success', description: isEditMode ? `${invoiceLabel} updated!` : `${invoiceLabel} created!` });
 
-      handlePrint(voucher);
+      if (voucherTypeMeta?.print_after_save) {
+        handlePrint(voucher);
+      }
 
       if (returnTo) {
         navigate(returnTo);
@@ -737,6 +803,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         setInventoryItems([{ id: '1', item_id: '', quantity: 1, rate: 0, discount_percent: 0, discount_amount: 0, tax_percent: 0, amount: 0, tax_amount: 0, net_amount: 0 }]);
         setAdditionalLedgers([]);
         setSelectedInventoryLedgerId('');
+        setOriginalDocId('');
         setSavedVoucher(null);
         await generateVoucherNumber();
       }
@@ -788,9 +855,29 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
     const itemRows = inventoryItems.filter(i => i.item_id).map((item, idx) => {
       const itemMaster = items.find(i => i.id === item.item_id);
       const unit = itemMaster?.uom_master?.symbol || itemMaster?.uom_master?.name || '';
+      const hsnCode = itemMaster?.hsn_code || '';
+
+      // Build batch detail lines only when item has batch tracking enabled
+      let batchInfo = '';
+      if (itemMaster?.enable_batches === true) {
+        const allocs: any[] = Array.isArray(item.batch_allocations) && item.batch_allocations.length > 0
+          ? item.batch_allocations
+          : (item.batch_id ? [{ batch_id: item.batch_id, batch_number: item.batch_id, qty: item.batch_qty ?? item.quantity, rate: item.rate }] : []);
+        if (allocs.length > 0) {
+          const lines = allocs.map((a: any) => {
+            const bName = a.batch_number || a.batch_id || '';
+            const bQty  = Number(a.qty || 0);
+            const bRate = Number(a.rate || 0);
+            return `Batch: ${bName} | Qty: ${bQty.toFixed(2)} | Rate: ${formatAmount(bRate)}`;
+          });
+          batchInfo = `<div style="font-size:10px;color:#555;margin-top:2px">${lines.join('<br/>')}</div>`;
+        }
+      }
+
       return `<tr>
         <td class="num">${idx + 1}</td>
-        <td class="desc-cell"><strong>${itemMaster?.name || ''}</strong></td>
+        <td class="desc-cell"><strong>${itemMaster?.name || ''}</strong>${batchInfo}</td>
+        <td class="num">${hsnCode}</td>
         <td class="num">${Number(item.quantity).toFixed(2)} ${unit}</td>
         <td class="num">${formatAmount(Number(item.rate))}</td>
         <td class="unit">${unit}</td>
@@ -804,6 +891,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       return `<tr>
         <td></td>
         <td class="desc-cell">${labelPrefix}<span class="adj-ledger">${ledger?.name || ''}</span></td>
+        <td></td>
         <td class="num"></td><td class="num"></td><td class="unit"></td>
         <td class="num">${formatAmount(amount)}</td>
       </tr>`;
@@ -821,10 +909,126 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
 
     const partyLedger = ledgers.find(l => l.id === (voucherToPrint.ledger_id || formData.ledger_id));
     const partyName = partyLedger?.name || voucherToPrint.ledger_name || '';
-    const printTitle = isSales
+    const defaultTitle = isSales
       ? (actualVoucherType === 'credit-note' ? 'CREDIT NOTE' : 'INVOICE')
       : (actualVoucherType === 'debit-note' ? 'DEBIT NOTE' : 'PURCHASE');
+    const printTitle = (voucherTypeMeta?.print_title?.trim()) || defaultTitle;
     const partyRoleLabel = isSales ? 'Customer (Bill to)' : 'Supplier';
+
+    // ── Tax analysis ─────────────────────────────────────────────────────────
+    // Identify tax ledgers: Duties & Taxes group with a known tax_type
+    const taxLedgerEntries = printableAdditionalLedgers.filter(({ ledger }) =>
+      ledger?.group_name === 'Duties & Taxes' &&
+      ledger?.tax_type && ['IGST', 'CGST', 'SGST', 'VAT'].includes(ledger.tax_type)
+    );
+    const hasTaxDetails = taxLedgerEntries.length > 0;
+    const isGST = companyTaxType === 'GST';
+
+    // Group items by HSN/tax-rate for the analysis table
+    type TaxGroup = {
+      hsn: string;
+      taxable: number;
+      cgst_rate: number; cgst_amount: number;
+      sgst_rate: number; sgst_amount: number;
+      igst_rate: number; igst_amount: number;
+      vat_rate: number;  vat_amount: number;
+      total_tax: number;
+    };
+    const taxGroupMap: Record<string, TaxGroup> = {};
+    inventoryItems.filter(i => i.item_id).forEach(item => {
+      const itemMaster = items.find(i => i.id === item.item_id);
+      const hsn = itemMaster?.hsn_code || '';
+      const taxable = Number(item.amount || 0);
+      let cgst_rate = 0, sgst_rate = 0, igst_rate = 0, vat_rate = 0;
+      if (isGST) {
+        // Prefer live itemMaster data; fall back to item.itemData stored on the row
+        cgst_rate = Number(itemMaster?.cgst_rate || item.itemData?.cgst_rate || 0);
+        sgst_rate = Number(itemMaster?.sgst_rate || item.itemData?.sgst_rate || 0);
+        igst_rate = Number(itemMaster?.igst_rate || item.itemData?.igst_rate || 0);
+      } else {
+        vat_rate = Number(itemMaster?.tax_rate || item.itemData?.tax_rate || item.tax_percent || 0);
+      }
+      const key = `${hsn}_${cgst_rate}_${sgst_rate}_${igst_rate}_${vat_rate}`;
+      if (!taxGroupMap[key]) {
+        taxGroupMap[key] = { hsn, taxable: 0, cgst_rate, cgst_amount: 0, sgst_rate, sgst_amount: 0, igst_rate, igst_amount: 0, vat_rate, vat_amount: 0, total_tax: 0 };
+      }
+      taxGroupMap[key].taxable += taxable;
+      taxGroupMap[key].cgst_amount += (taxable * cgst_rate) / 100;
+      taxGroupMap[key].sgst_amount += (taxable * sgst_rate) / 100;
+      taxGroupMap[key].igst_amount += (taxable * igst_rate) / 100;
+      taxGroupMap[key].vat_amount  += (taxable * vat_rate)  / 100;
+    });
+    const taxGroups = Object.values(taxGroupMap);
+    taxGroups.forEach(g => { g.total_tax = g.cgst_amount + g.sgst_amount + g.igst_amount + g.vat_amount; });
+
+    const taxAnalysisTable = hasTaxDetails ? (() => {
+      const totalTaxable  = taxGroups.reduce((s, g) => s + g.taxable, 0);
+      const totalCgst     = taxGroups.reduce((s, g) => s + g.cgst_amount, 0);
+      const totalSgst     = taxGroups.reduce((s, g) => s + g.sgst_amount, 0);
+      const totalIgst     = taxGroups.reduce((s, g) => s + g.igst_amount, 0);
+      const totalVat      = taxGroups.reduce((s, g) => s + g.vat_amount, 0);
+      const totalTax      = taxGroups.reduce((s, g) => s + g.total_tax, 0);
+
+      const headerRow = isGST
+        ? `<tr><th>HSN/SAC</th><th class="num">Taxable Value</th>
+            <th class="num">CGST Rate</th><th class="num">CGST Amt</th>
+            <th class="num">SGST Rate</th><th class="num">SGST Amt</th>
+            <th class="num">Total Tax Amt</th></tr>`
+        : `<tr><th>HSN/SAC</th><th class="num">Taxable Value</th>
+            <th class="num">VAT Rate</th><th class="num">VAT Amt</th>
+            <th class="num">Total Tax Amt</th></tr>`;
+
+      const dataRows = taxGroups.map(g => {
+        if (isGST) {
+          return `<tr>
+            <td>${g.hsn || '—'}</td>
+            <td class="num">${formatAmount(g.taxable)}</td>
+            <td class="num">${g.cgst_rate > 0 ? g.cgst_rate + '%' : '—'}</td>
+            <td class="num">${g.cgst_amount > 0 ? formatAmount(g.cgst_amount) : '—'}</td>
+            <td class="num">${g.sgst_rate > 0 ? g.sgst_rate + '%' : '—'}</td>
+            <td class="num">${g.sgst_amount > 0 ? formatAmount(g.sgst_amount) : '—'}</td>
+            <td class="num">${formatAmount(g.total_tax)}</td>
+          </tr>`;
+        } else {
+          return `<tr>
+            <td>${g.hsn || '—'}</td>
+            <td class="num">${formatAmount(g.taxable)}</td>
+            <td class="num">${g.vat_rate > 0 ? g.vat_rate + '%' : '—'}</td>
+            <td class="num">${g.vat_amount > 0 ? formatAmount(g.vat_amount) : '—'}</td>
+            <td class="num">${formatAmount(g.total_tax)}</td>
+          </tr>`;
+        }
+      }).join('');
+
+      const totalRow = isGST
+        ? `<tr class="totals-row">
+            <td><strong>Total</strong></td>
+            <td class="num"><strong>${formatAmount(totalTaxable)}</strong></td>
+            <td></td><td class="num"><strong>${formatAmount(totalCgst)}</strong></td>
+            <td></td><td class="num"><strong>${formatAmount(totalSgst)}</strong></td>
+            <td class="num"><strong>${formatAmount(totalTax)}</strong></td>
+          </tr>`
+        : `<tr class="totals-row">
+            <td><strong>Total</strong></td>
+            <td class="num"><strong>${formatAmount(totalTaxable)}</strong></td>
+            <td></td><td class="num"><strong>${formatAmount(totalVat)}</strong></td>
+            <td class="num"><strong>${formatAmount(totalTax)}</strong></td>
+          </tr>`;
+
+      return `<table class="tax-table">
+        <thead>${headerRow}</thead>
+        <tbody>${dataRows}${totalRow}</tbody>
+      </table>`;
+    })() : '';
+
+    // Tax amount in words row
+    const totalTaxAmount = taxGroups.reduce((s, g) => s + g.total_tax, 0);
+    const taxAmountWordsRow = hasTaxDetails
+      ? `<tr><td class="cell-pad">
+          <div class="label">Tax Amount (in words)</div>
+          <div class="amount-words">INR ${numberToWords(totalTaxAmount)}</div>
+        </td></tr>`
+      : '';
 
     printWindow.document.write(`
       <html><head>
@@ -832,10 +1036,13 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         <style>
           body { font-family: Arial, sans-serif; margin: 10px; color: #000; }
           .title { text-align: center; font-size: 30px; font-weight: 700; margin-bottom: 8px; }
-          .outer, .items, .bottom { width: 100%; border-collapse: collapse; }
+          .outer, .items, .bottom, .tax-table { width: 100%; border-collapse: collapse; }
           .outer td, .outer th, .items td, .items th, .bottom td { border: 1px solid #000; vertical-align: top; }
+          .tax-table td, .tax-table th { border: 1px solid #000; padding: 4px 6px; font-size: 11px; vertical-align: middle; }
+          .tax-table thead th { background: #f0f0f0; font-weight: 600; text-align: center; }
+          .tax-table .totals-row td { background: #f9f9f9; }
           .cell-pad { padding: 6px; }
-          .label { font-size: 12px; }
+          .label { font-size: 12px; color: #555; }
           .value { font-size: 28px; font-weight: 700; }
           .items th { font-size: 12px; font-weight: 600; text-align: center; padding: 4px; }
           .items td { font-size: 12px; padding: 4px; }
@@ -861,8 +1068,8 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
             <td style="width:25%" class="cell-pad"><div class="label">Dated</div><div>${voucherToPrint.voucher_date}</div></td>
           </tr>
           <tr>
-            <td class="cell-pad"><div class="label">Reference No.</div><div>${voucherToPrint.reference_number || ''}</div></td>
-            <td class="cell-pad"><div class="label">Reference Date</div><div>${voucherToPrint.reference_date || ''}</div></td>
+            <td class="cell-pad"><div class="label">Reference No. &amp; Date</div><div>${voucherToPrint.reference_number || ''}</div></td>
+            <td class="cell-pad"><div class="label">Other References</div><div>${voucherToPrint.reference_date || ''}</div></td>
           </tr>
           <tr>
             <td class="cell-pad" style="height:90px">
@@ -874,18 +1081,20 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         </table>
         <table class="items">
           <tr>
-            <th style="width:5%">Sl No.</th>
-            <th style="width:54%">Description of Goods</th>
-            <th style="width:10%">Quantity</th>
-            <th style="width:10%">Rate</th>
+            <th style="width:4%">Sl<br/>No.</th>
+            <th style="width:39%">Description of Goods</th>
+            <th style="width:10%">HSN/SAC</th>
+            <th style="width:9%">Quantity</th>
+            <th style="width:9%">Rate</th>
             <th style="width:5%">per</th>
-            <th style="width:16%">Amount</th>
+            <th style="width:14%">Amount</th>
           </tr>
           ${itemRows}
           ${additionalRows}
           <tr class="totals">
             <td></td>
             <td class="num">Total</td>
+            <td></td>
             <td class="num">${Number(totalQty).toFixed(2)} ${firstUnit}</td>
             <td></td><td></td>
             <td class="num">${formatAmount(columnTotalAmount, true)}</td>
@@ -893,18 +1102,29 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         </table>
         <table class="bottom">
           <tr>
-            <td class="cell-pad"><div class="label">Narration</div><div>${voucherToPrint.narration || '-'}</div></td>
-          </tr>
-          <tr>
             <td class="cell-pad">
               <div class="label">Amount Chargeable (in words)</div>
               <div class="amount-words">INR ${numberToWords(columnTotalAmount)}</div>
+              <div style="text-align:right;font-size:11px;font-weight:700;margin-top:2px">E. &amp; O.E.</div>
+            </td>
+          </tr>
+          ${hasTaxDetails ? `<tr><td class="cell-pad">
+            <div class="label" style="margin-bottom:4px;font-weight:600">Tax Analysis</div>
+            ${taxAnalysisTable}
+          </td></tr>` : ''}
+          ${taxAmountWordsRow}
+          <tr>
+            <td class="cell-pad">
+              ${voucherToPrint.narration ? `<div class="label">Narration</div><div style="font-size:12px;margin-bottom:6px">${voucherToPrint.narration}</div>` : ''}
+              <div class="label">Declaration</div>
+              <div style="font-size:11px">We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div>
+              <div style="font-size:10px;margin-top:4px;font-style:italic">This is a Computer Generated Invoice</div>
             </td>
           </tr>
           <tr>
             <td class="cell-pad sign-box">
-              <div><strong>for ${selectedCompany?.name || ''}</strong></div>
-              <div style="margin-top:38px">Authorised Signatory</div>
+              <div style="text-align:right"><strong>for ${selectedCompany?.name || ''}</strong></div>
+              <div style="margin-top:38px;text-align:right">Authorised Signatory</div>
             </td>
           </tr>
         </table>
@@ -937,12 +1157,8 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
     setItems(prev => [...prev, item]);
   };
 
-  const voucherNumberLabel = isSales
-    ? (actualVoucherType === 'credit-note' ? 'Note Number' : 'Invoice Number')
-    : (actualVoucherType === 'debit-note' ? 'Note Number' : 'Bill Number');
-  const voucherDateLabel = isSales
-    ? (actualVoucherType === 'credit-note' ? 'Note Date' : 'Invoice Date')
-    : (actualVoucherType === 'debit-note' ? 'Note Date' : 'Bill Date');
+  const voucherNumberLabel = 'Voucher Number';
+  const voucherDateLabel = 'Date';
   const cardDetailsTitle = isSales
     ? (actualVoucherType === 'credit-note' ? 'Credit Note Details' : 'Invoice Details')
     : (actualVoucherType === 'debit-note' ? 'Debit Note Details' : 'Purchase Details');
@@ -1035,9 +1251,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                   <Label>{voucherNumberLabel}</Label>
                   <Input
                     value={formData.voucher_number}
-                    onChange={(e) => setFormData({ ...formData, voucher_number: e.target.value })}
-                    placeholder="Enter number"
-                    required
+                    readOnly
+                    className="bg-muted cursor-not-allowed"
+                    placeholder="Auto-generated"
                   />
                 </div>
 
@@ -1059,6 +1275,73 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                     placeholder="Enter reference number"
                   />
                 </div>
+
+                {isReturn && (
+                  <div className="md:col-span-2">
+                    <Label className="font-medium">
+                      Against Original {isSales ? 'Sales Invoice' : 'Purchase Invoice'}
+                      <span className="ml-1 text-xs font-normal text-muted-foreground">(optional — leave blank for manual return)</span>
+                    </Label>
+                    <div className="flex gap-2 mt-1">
+                      <div className="flex-1">
+                        <SearchableDropdown
+                          value={originalDocId}
+                          onValueChange={async (id) => {
+                            setOriginalDocId(id);
+                            if (!id) return;
+                            try {
+                              const res = await fetch(`http://localhost:5000/api/vouchers/${id}`);
+                              const json = await res.json();
+                              const orig = json?.data;
+                              if (!orig) return;
+                              // Load items from original voucher
+                              const itemDetails = (orig.details || []).filter((d: any) => d.item_id);
+                              if (itemDetails.length > 0) {
+                                setInventoryItems(itemDetails.map((d: any, i: number) => ({
+                                  id: (i + 1).toString(),
+                                  item_id: d.item_id || '',
+                                  quantity: Number(d.quantity || 0),
+                                  rate: Number(d.rate || 0),
+                                  discount_percent: Number(d.discount_percent || 0),
+                                  discount_amount: Number(d.discount_amount || 0),
+                                  tax_percent: Number(d.tax_percent || 0),
+                                  amount: Number(d.amount || 0),
+                                  tax_amount: Number(d.tax_amount || 0),
+                                  net_amount: Number(d.net_amount || 0),
+                                  batch_id: null,
+                                  batch_allocations: [],
+                                  itemData: { cgst_rate: Number(d.cgst_rate || 0), sgst_rate: Number(d.sgst_rate || 0), igst_rate: Number(d.igst_rate || 0), tax_rate: Number(d.tax_percent || 0) },
+                                })));
+                              }
+                              // Set party ledger if not already set
+                              if (!formData.ledger_id && orig.ledger_id) {
+                                setFormData(p => ({ ...p, ledger_id: orig.ledger_id }));
+                              }
+                            } catch (e) {
+                              console.error('Failed to load original voucher', e);
+                            }
+                          }}
+                          placeholder={`Select original ${isSales ? 'sales' : 'purchase'} invoice…`}
+                          options={(formData.ledger_id
+                            ? originalVouchers.filter(v => v.ledger_id === formData.ledger_id)
+                            : originalVouchers
+                          ).map(v => ({
+                            value: v.id,
+                            label: `${v.voucher_number} — ${v.voucher_date}${v.net_amount ? ` — ${currencySymbol}${Number(v.net_amount).toFixed(2)}` : ''}`,
+                          }))}
+                        />
+                      </div>
+                      {originalDocId && (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => { setOriginalDocId(''); }}>
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                    {originalDocId && (
+                      <p className="text-xs text-green-600 mt-1">Items loaded from original invoice. You can adjust quantities or remove items before saving.</p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <Label>Reference Date</Label>
@@ -1095,8 +1378,8 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
               <div className="space-y-4">
                 {inventoryItems.map((item, index) => {
                   const selectedItemMaster = items.find(i => i.id === item.item_id);
-                  const isBatchEnabled = selectedItemMaster?.enable_batches === true;
-                  const isReadOnly = !!(isBatchEnabled && Array.isArray(item.batch_allocations) && item.batch_allocations.length > 0);
+                  const isBatchEnabled = companyBatchesEnabled && selectedItemMaster?.enable_batches === true;
+                  const isReadOnly = isBatchEnabled;
                   return (
                     <div key={item.id} className="p-4 border rounded-lg space-y-3">
                       <div>
@@ -1118,16 +1401,18 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                           <Button type="button" variant="outline" size="sm" onClick={() => setQuickCreateItemOpen(true)}>
                             <Plus className="h-4 w-4" />
                           </Button>
-                          <Button
-                            type="button"
-                            variant={item.batch_id ? 'default' : 'outline'}
-                            size="sm"
-                            onClick={() => openBatchSelection(index)}
-                            disabled={!item.item_id || !isBatchEnabled}
-                            title={!isBatchEnabled ? 'Batches disabled for this item' : (item.batch_id ? 'Batch selected' : 'Select batch')}
-                          >
-                            <Package className="h-4 w-4" />
-                          </Button>
+                          {isBatchEnabled && (
+                            <Button
+                              type="button"
+                              variant={item.batch_id ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => openBatchSelection(index)}
+                              disabled={!item.item_id}
+                              title={item.batch_id ? 'Batch selected' : 'Select batch'}
+                            >
+                              <Package className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <div className={`grid gap-2 items-end ${showDiscountColumn ? 'grid-cols-[repeat(9,1fr)]' : 'grid-cols-[repeat(7,1fr)]'}`}>
@@ -1149,17 +1434,32 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                               <Label>Disc %</Label>
                               <Input type="number" value={item.discount_percent}
                                 onChange={(e) => updateInventoryItem(index, 'discount_percent', parseFloat(e.target.value) || 0)}
-                                min="0" step="0.01" />
+                                min="0" step="0.01"
+                                readOnly={discountEntryMode === 'amount'}
+                                className={discountEntryMode === 'amount' ? 'bg-muted' : ''}
+                              />
                             </div>
                             <div>
                               <Label>Disc Amt</Label>
-                              <Input type="number" value={item.discount_amount} readOnly className="bg-muted" />
+                              <Input type="number" value={parseFloat(item.discount_amount.toFixed(2))}
+                                onChange={(e) => updateInventoryItem(index, 'discount_amount', parseFloat(e.target.value) || 0)}
+                                min="0" step="0.01"
+                                readOnly={discountEntryMode === 'percent'}
+                                className={discountEntryMode === 'percent' ? 'bg-muted' : ''}
+                              />
                             </div>
                           </>
                         )}
                         <div>
                           <Label>Amount</Label>
-                          <Input value={item.amount.toFixed(2)} readOnly className="bg-muted" />
+                          <Input
+                            type="number"
+                            value={parseFloat(item.amount.toFixed(2))}
+                            onChange={e => updateInventoryItem(index, 'amount', parseFloat(e.target.value) || 0)}
+                            min="0" step="0.01"
+                            readOnly={isReadOnly}
+                            className={isReadOnly ? 'bg-muted' : ''}
+                          />
                         </div>
                         {isTaxEnabled && (
                           <>

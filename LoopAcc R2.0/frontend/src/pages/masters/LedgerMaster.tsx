@@ -17,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ArrowLeft, Plus, Edit, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
-import { getCompanyTaxType, isCompanyTaxEnabled } from '@/lib/companyTax';
+import { getCompanyTaxType, isCompanyTaxEnabled, isCompanyBillsEnabled } from '@/lib/companyTax';
 import BillwiseAllocationDialog from '@/components/BillwiseAllocationDialog';
 
 type BillType = 'ON ACCOUNTS' | 'Against Ref' | 'New Ref' | 'Opening' | 'Advance';
@@ -223,6 +223,7 @@ const LedgerMaster = () => {
   /** Groups where bill-wise must be disabled: Bank Accounts(1005), Cash-in-Hand(1006), Fixed Assets(1017), Bank OD A/c(1022) */
   const BILLWISE_DISABLED_INDEXES = new Set([1005, 1006, 1017, 1022]);
   const isBillwiseDisabledGroup = BILLWISE_DISABLED_INDEXES.has(Number(selectedLedgerGroup?.group_index));
+  const billsEnabled = isCompanyBillsEnabled(selectedCompany);
 
   useEffect(() => {
     if (isBillwiseDisabledGroup && formData.is_billwise) {
@@ -864,25 +865,40 @@ const LedgerMaster = () => {
                     rows={3}
                   />
                 </div>
-                  <div className="flex items-center space-x-2 pt-6">
-                    <input 
-                      type="checkbox"
-                      id="is_billwise"
-                      checked={formData.is_billwise}
-                      disabled={isBillwiseDisabledGroup}
-                      onChange={(e) => setFormData({...formData, is_billwise: e.target.checked})}
-                      className="w-4 h-4 rounded border-gray-300"
-                    />
-                    <Label htmlFor="is_billwise" className="cursor-pointer">Enable Bill-Wise Opening Balance</Label>
-                  </div>
-                  
-                  <div className="col-span-full">
-                    <p className="text-xs text-gray-500">
-                      {isBillwiseDisabledGroup
-                        ? 'Bill-wise opening is disabled for Bank Accounts, Cash-in-Hand, Fixed Assets and Bank OD A/c.'
-                        : 'When enabled, opening balance is tracked under "ON ACCOUNTS" allowing bill-by-bill allocation in payments instead of a single opening balance.'}
-                    </p>
-                  </div>
+                  {billsEnabled && (
+                    <>
+                      <div className="flex items-center space-x-2 pt-6">
+                        <input 
+                          type="checkbox"
+                          id="is_billwise"
+                          checked={formData.is_billwise}
+                          disabled={isBillwiseDisabledGroup}
+                          onChange={async (e) => {
+                            const newVal = e.target.checked;
+                            if (!newVal && editingLedger?.id && selectedCompany) {
+                              const resp = await fetch(`http://localhost:5000/api/bills/ledger/${editingLedger.id}?companyId=${selectedCompany.id}`);
+                              const json = await resp.json();
+                              if (json.data && json.data.length > 0) {
+                                toast({ title: 'Cannot disable', description: `This ledger has ${json.data.length} existing bill(s). Delete them before disabling bill-wise.`, variant: 'destructive' });
+                                return;
+                              }
+                            }
+                            setFormData({...formData, is_billwise: newVal});
+                          }}
+                          className="w-4 h-4 rounded border-gray-300"
+                        />
+                        <Label htmlFor="is_billwise" className="cursor-pointer">Enable Bill-Wise Opening Balance</Label>
+                      </div>
+                      
+                      <div className="col-span-full">
+                        <p className="text-xs text-gray-500">
+                          {isBillwiseDisabledGroup
+                            ? 'Bill-wise opening is disabled for Bank Accounts, Cash-in-Hand, Fixed Assets and Bank OD A/c.'
+                            : 'When enabled, opening balance is tracked under "ON ACCOUNTS" allowing bill-by-bill allocation in payments instead of a single opening balance.'}
+                        </p>
+                      </div>
+                    </>
+                  )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>

@@ -66,9 +66,19 @@ export async function createDefaultVoucherTypesForCompany(companyId, existingSet
       name: existing?.name ?? def.name,
       base_type: def.base_type,
       is_system: true,
+      is_pos: existing?.is_pos ?? false,
       prefix: migratedPrefix,
       suffix: existing?.suffix ?? def.suffix,
       starting_number: migratedStarting,
+      pos_sales_ledger_id: existing?.pos_sales_ledger_id ?? null,
+      pos_cash_ledger_id: existing?.pos_cash_ledger_id ?? null,
+      pos_card_ledger_id: existing?.pos_card_ledger_id ?? null,
+      pos_online_ledger_id: existing?.pos_online_ledger_id ?? null,
+      pos_tax_ledger_id: existing?.pos_tax_ledger_id ?? null,
+      pos_cgst_ledger_id: existing?.pos_cgst_ledger_id ?? null,
+      pos_sgst_ledger_id: existing?.pos_sgst_ledger_id ?? null,
+      print_after_save: existing?.print_after_save ?? false,
+      print_title: existing?.print_title ?? '',
       created_at: existing?.created_at || now,
       updated_at: now,
     };
@@ -139,15 +149,27 @@ export async function createVoucherType(companyId, data) {
     throw err;
   }
 
+  const POS_ALLOWED_BASE_TYPES = ["sales", "credit-note"];
+  const isPosType = POS_ALLOWED_BASE_TYPES.includes(data.base_type);
   const doc = {
     id: uuidv4(),
     company_id: companyId,
     name: data.name.trim(),
     base_type: data.base_type,
     is_system: false,
+    is_pos: isPosType ? (data.is_pos === true) : false,
     prefix: (data.prefix || "").trim(),
     suffix: (data.suffix || "").trim(),
     starting_number: Math.max(1, parseInt(String(data.starting_number || 1))),
+    pos_sales_ledger_id: isPosType ? (data.pos_sales_ledger_id || null) : null,
+    pos_cash_ledger_id: isPosType ? (data.pos_cash_ledger_id || null) : null,
+    pos_card_ledger_id: isPosType ? (data.pos_card_ledger_id || null) : null,
+    pos_online_ledger_id: isPosType ? (data.pos_online_ledger_id || null) : null,
+    pos_tax_ledger_id: isPosType ? (data.pos_tax_ledger_id || null) : null,
+    pos_cgst_ledger_id: isPosType ? (data.pos_cgst_ledger_id || null) : null,
+    pos_sgst_ledger_id: isPosType ? (data.pos_sgst_ledger_id || null) : null,
+    print_after_save: data.print_after_save === true,
+    print_title: (data.print_title || '').trim(),
     created_at: now,
     updated_at: now,
   };
@@ -165,6 +187,8 @@ export async function updateVoucherType(id, data) {
     throw err;
   }
 
+  const POS_ALLOWED_BASE_TYPES = ["sales", "credit-note"];
+  const effectiveBaseType = existing.base_type;
   const updateFields = {
     prefix: data.prefix !== undefined ? String(data.prefix).trim() : existing.prefix,
     suffix: data.suffix !== undefined ? String(data.suffix).trim() : existing.suffix,
@@ -174,6 +198,27 @@ export async function updateVoucherType(id, data) {
         : existing.starting_number,
     updated_at: new Date(),
   };
+  if (POS_ALLOWED_BASE_TYPES.includes(effectiveBaseType)) {
+    if (data.is_pos !== undefined) updateFields.is_pos = data.is_pos === true;
+    const POS_LEDGER_FIELDS = [
+      'pos_sales_ledger_id', 'pos_cash_ledger_id', 'pos_card_ledger_id',
+      'pos_online_ledger_id', 'pos_tax_ledger_id',
+      'pos_cgst_ledger_id', 'pos_sgst_ledger_id',
+    ];
+    for (const field of POS_LEDGER_FIELDS) {
+      if (data[field] !== undefined) {
+        updateFields[field] = data[field] || null;
+      }
+    }
+  }
+
+  if (data.print_after_save !== undefined) {
+    updateFields.print_after_save = data.print_after_save === true;
+  }
+
+  if (data.print_title !== undefined) {
+    updateFields.print_title = String(data.print_title || '').trim();
+  }
 
   // Allow name change only for custom (non-system) types
   if (!existing.is_system && data.name) {

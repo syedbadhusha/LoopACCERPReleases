@@ -133,6 +133,27 @@ router.get("/ledger/:ledgerId", async (req, res) => {
   }
 });
 
+// GET /api/bills/has-bills?companyId=X - Check if any real bills exist for company
+router.get("/has-bills", async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: "companyId is required" });
+    }
+    const db = getDb ? getDb() : null;
+    if (!db) return res.status(500).json({ success: false, message: "Database unavailable" });
+    // Exclude system-generated "ON ACCOUNTS" entries — only count real user-created bills
+    const count = await db.collection("bills").countDocuments({
+      company_id: companyId,
+      bill_type: { $nin: ["ON ACCOUNTS", "on accounts", "on account"] }
+    });
+    res.json({ success: true, hasBills: count > 0, count });
+  } catch (error) {
+    console.error("has-bills check error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // GET /api/bills/outstanding - Get all outstanding bills (receivable and payable)
 router.get("/outstanding", async (req, res) => {
   try {

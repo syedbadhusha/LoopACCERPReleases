@@ -65,7 +65,12 @@ router.get("/:id", async (req, res) => {
 // ─── POST /api/voucher-types ──────────────────────────────────────────────────
 router.post("/", async (req, res) => {
   try {
-    const { company_id, name, base_type, prefix, suffix, starting_number } = req.body;
+    const {
+      company_id, name, base_type, prefix, suffix, starting_number,
+      is_pos,
+      pos_sales_ledger_id, pos_cash_ledger_id, pos_card_ledger_id,
+      pos_online_ledger_id, pos_tax_ledger_id, pos_cgst_ledger_id, pos_sgst_ledger_id,
+    } = req.body;
     if (!company_id || !name || !base_type) {
       return res.status(400).json({
         success: false,
@@ -78,6 +83,14 @@ router.post("/", async (req, res) => {
       prefix,
       suffix,
       starting_number,
+      is_pos,
+      pos_sales_ledger_id,
+      pos_cash_ledger_id,
+      pos_card_ledger_id,
+      pos_online_ledger_id,
+      pos_tax_ledger_id,
+      pos_cgst_ledger_id,
+      pos_sgst_ledger_id,
     });
     return res.status(201).json({ success: true, data: doc });
   } catch (error) {

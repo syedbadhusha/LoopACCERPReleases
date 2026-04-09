@@ -672,7 +672,7 @@ async function recalculateLedgerBalancesFromVouchers(companyId, ledgerIds = []) 
     return;
   }
 
-  const voucherMatch = { company_id: companyId };
+  const voucherMatch = { company_id: companyId, optional: { $ne: true } };
   if (targetLedgerIds.length > 0) {
     voucherMatch["ledger_entries.ledger_id"] = { $in: targetLedgerIds };
   }
@@ -1502,13 +1502,21 @@ export async function createVoucherWithDetails(payload) {
     voucher_number: payload.voucher_number,
     voucher_date: payload.voucher_date,
     voucher_type: payload.voucher_type, // purchase, sales, payment, receipt
+    voucher_type_id: payload.voucher_type_id || null,
+    is_pos: payload.is_pos === true || payload.is_pos === 'true',
+    pos_cash_amount: payload.pos_cash_amount || null,
+    pos_cash_tendered: payload.pos_cash_tendered || null,
+    pos_card_amount: payload.pos_card_amount || null,
+    pos_card_ref: payload.pos_card_ref || null,
+    pos_online_amount: payload.pos_online_amount || null,
+    pos_online_ref: payload.pos_online_ref || null,
     company_id: payload.company_id,
     ledger_id: payload.ledger_id, // Main ledger (supplier/customer)
     reference_number: payload.reference_number || "",
     reference_date: payload.reference_date || null,
+    original_doc_id: payload.original_doc_id || null,
+    optional: payload.optional === true || payload.optional === 'true' ? true : false,
     narration: payload.narration || "",
-
-    // Inventory entries - items with batch details
     inventory: inventory,
 
     // Ledger entries - only ledger_id and amount
@@ -1530,9 +1538,52 @@ export async function createVoucherWithDetails(payload) {
     ledger_count: voucher.ledger_entries.length,
   });
 
+  // Ensure voucher_number is unique (case-insensitive) within this voucher type.
+  // If the proposed number is already taken (two instances submitted simultaneously),
+  // auto-increment to the next available number instead of failing.
+  if (voucher.voucher_number && voucher.voucher_type_id && !voucher.optional) {
+    const vt = await db.collection("voucher_types").findOne({
+      id: String(voucher.voucher_type_id),
+      company_id: String(voucher.company_id),
+    });
+    const vtPrefix = String(vt?.prefix || "");
+    const vtSuffix = String(vt?.suffix || "");
+
+    let candidate = voucher.voucher_number;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const escapedCandidate = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const dup = await db.collection("vouchers").findOne({
+        company_id: voucher.company_id,
+        voucher_type_id: voucher.voucher_type_id,
+        voucher_number: { $regex: new RegExp(`^${escapedCandidate}$`, "i") },
+      });
+      if (!dup) break;
+
+      // Strip prefix/suffix, increment the numeric part
+      let stripped = candidate;
+      if (vtPrefix && stripped.toLowerCase().startsWith(vtPrefix.toLowerCase())) {
+        stripped = stripped.slice(vtPrefix.length);
+      }
+      if (vtSuffix && stripped.toLowerCase().endsWith(vtSuffix.toLowerCase())) {
+        stripped = stripped.slice(0, stripped.length - vtSuffix.length);
+      }
+      const num = parseInt(stripped, 10);
+      if (isNaN(num)) break; // non-numeric — cannot auto-increment, keep as-is
+      candidate = `${vtPrefix}${String(num + 1).padStart(4, "0")}${vtSuffix}`;
+    }
+
+    voucher.voucher_number = candidate;
+  }
+
   // Insert as single document in vouchers collection
   const res = await db.collection("vouchers").insertOne(voucher);
   if (!res.acknowledged) throw new Error("Failed to insert voucher");
+
+  // If this is an optional/held voucher, skip all side-effects (ledger, batch, stock)
+  if (voucher.optional) {
+    console.log("[CREATE VOUCHER] Voucher is optional (on hold) — skipping all side-effects.");
+    return voucher;
+  }
 
   // Update batch allocations for inventory items
   console.log("[CREATE VOUCHER] Updating batch allocations...");
@@ -2013,13 +2064,17 @@ export async function updateVoucherWithDetails(id, payload) {
   const oldVoucher = await db.collection("vouchers").findOne({ id });
   if (!oldVoucher) throw new Error("Voucher not found");
 
-  // Reverse old batch allocations
-  console.log("[UPDATE VOUCHER] Reversing old batch allocations...");
-  await reverseBatchAllocations(
-    oldVoucher.inventory || [],
-    oldVoucher.voucher_type,
-    oldVoucher.company_id,
-  );
+  // Reverse old batch allocations — only if the previous save was NOT optional
+  if (!oldVoucher.optional) {
+    console.log("[UPDATE VOUCHER] Reversing old batch allocations...");
+    await reverseBatchAllocations(
+      oldVoucher.inventory || [],
+      oldVoucher.voucher_type,
+      oldVoucher.company_id,
+    );
+  } else {
+    console.log("[UPDATE VOUCHER] Previous voucher was optional — skipping batch reversal.");
+  }
 
   // Transform new payload (now async to enrich batch data)
   const { inventory, ledger_entries } = await transformVoucherPayload(payload);
@@ -2030,10 +2085,20 @@ export async function updateVoucherWithDetails(id, payload) {
     voucher_number: payload.voucher_number,
     voucher_date: payload.voucher_date,
     voucher_type: payload.voucher_type,
+    voucher_type_id: payload.voucher_type_id || oldVoucher.voucher_type_id || null,
+    is_pos: payload.is_pos === true || payload.is_pos === 'true' || oldVoucher.is_pos || false,
+    pos_cash_amount: payload.pos_cash_amount !== undefined ? (payload.pos_cash_amount || null) : (oldVoucher.pos_cash_amount || null),
+    pos_cash_tendered: payload.pos_cash_tendered !== undefined ? (payload.pos_cash_tendered || null) : (oldVoucher.pos_cash_tendered || null),
+    pos_card_amount: payload.pos_card_amount !== undefined ? (payload.pos_card_amount || null) : (oldVoucher.pos_card_amount || null),
+    pos_card_ref: payload.pos_card_ref !== undefined ? (payload.pos_card_ref || null) : (oldVoucher.pos_card_ref || null),
+    pos_online_amount: payload.pos_online_amount !== undefined ? (payload.pos_online_amount || null) : (oldVoucher.pos_online_amount || null),
+    pos_online_ref: payload.pos_online_ref !== undefined ? (payload.pos_online_ref || null) : (oldVoucher.pos_online_ref || null),
     company_id: payload.company_id,
     ledger_id: payload.ledger_id,
     reference_number: payload.reference_number || "",
     reference_date: payload.reference_date || null,
+    original_doc_id: payload.original_doc_id !== undefined ? (payload.original_doc_id || null) : (oldVoucher.original_doc_id || null),
+    optional: payload.optional === true || payload.optional === 'true' ? true : false,
     narration: payload.narration || "",
     inventory: inventory,
     ledger_entries: ledger_entries,
@@ -2044,10 +2109,11 @@ export async function updateVoucherWithDetails(id, payload) {
   };
 
   // Reverse previous settlement bill allocations before applying edited values.
+  // Only if the old voucher was NOT optional (held), since held vouchers have no side-effects.
   const isSettlementVoucher = ["payment", "receipt"].includes(
     String(oldVoucher.voucher_type || "").toLowerCase(),
   );
-  const previousSettlementBillAllocations = isSettlementVoucher
+  const previousSettlementBillAllocations = (!oldVoucher.optional && isSettlementVoucher)
     ? extractSettlementBillAllocationsFromLedgerEntries(
         oldVoucher.ledger_entries || [],
       )
@@ -2066,10 +2132,11 @@ export async function updateVoucherWithDetails(id, payload) {
     });
   }
 
-  const previousOnAccountsAllocations =
-    extractOnAccountsBillAllocationsFromLedgerEntries(
-      oldVoucher.ledger_entries || [],
-    );
+  const previousOnAccountsAllocations = !oldVoucher.optional
+    ? extractOnAccountsBillAllocationsFromLedgerEntries(
+        oldVoucher.ledger_entries || [],
+      )
+    : [];
 
   if (previousOnAccountsAllocations.length > 0) {
     await reverseInvoiceOnAccountsOpeningInBills({
@@ -2095,7 +2162,38 @@ export async function updateVoucherWithDetails(id, payload) {
 
   if (!result.value) throw new Error("Failed to update voucher");
 
+  // If the updated voucher is still optional/held, skip all side-effects.
+  // If it was previously non-optional, also clean up any invoice bills that were created.
+  if (updatedVoucher.optional) {
+    console.log("[UPDATE VOUCHER] Voucher is optional (on hold) — skipping all side-effects.");
+    if (!oldVoucher.optional) {
+      // Voucher transitioned from active → held: purge invoice bills that were written
+      await db.collection("bills").deleteMany({
+        $or: [
+          { voucher_id: id },
+          { invoice_voucher_id: id },
+          { payment_voucher_id: id },
+        ],
+      });
+      console.log("[UPDATE VOUCHER] Purged invoice/settlement bills for voucher now on hold.");
+    }
+    const held = await db.collection("vouchers").findOne({ id });
+    return held || result.value;
+  }
+
   console.log("[UPDATE VOUCHER] Syncing ledger entries in voucher document...");
+
+  // Delete old invoice/opening bills for this voucher so that any changed bill_reference
+  // entries don't leave orphan records. Settlement bills were already reversed above.
+  // We exclude ON-ACCOUNT bills that come from ledger-opening (source: "ledger-opening") as
+  // those belong to the ledger master, not to this voucher.
+  if (!oldVoucher.optional) {
+    await db.collection("bills").deleteMany({
+      company_id: updatedVoucher.company_id,
+      voucher_id: id,
+      source: { $nin: ["ledger-opening", "on-account-settlement", "standalone"] },
+    });
+  }
 
   // Insert new ledger entries
   if (ledger_entries && ledger_entries.length > 0) {
@@ -2535,7 +2633,7 @@ export async function getVouchersByCompany(
   dateTo = null,
 ) {
   const db = getDb();
-  const filter = { company_id: companyId };
+  const filter = { company_id: companyId, optional: { $ne: true } };
 
   if (voucherType) {
     filter.voucher_type = voucherType;
@@ -2685,33 +2783,38 @@ export async function deleteVoucher(id) {
   // Get voucher to reverse batch allocations
   const voucher = await db.collection("vouchers").findOne({ id });
   if (voucher) {
-    const voucherBillAllocations = extractSettlementBillAllocationsFromLedgerEntries(
-      voucher.ledger_entries || [],
-    );
-
-    // Reverse bill allocation movement first so bills closing/debit/credit remain accurate.
-    if (voucherBillAllocations.length > 0) {
-      console.log(
-        "[DELETE VOUCHER] Reversing bill allocations in bills collection...",
+    if (!voucher.optional) {
+      // Only reverse side-effects that were originally applied (optional vouchers have none)
+      const voucherBillAllocations = extractSettlementBillAllocationsFromLedgerEntries(
+        voucher.ledger_entries || [],
       );
-      await applyVoucherAllocationsToBills({
-        db,
-        companyId: voucher.company_id,
-        voucherType: voucher.voucher_type,
-        voucherDate: voucher.voucher_date,
-        voucherId: voucher.id,
-        voucherNumber: voucher.voucher_number,
-        allocations: voucherBillAllocations,
-        reverse: true,
-      });
-    }
 
-    console.log("[DELETE VOUCHER] Reversing batch allocations...");
-    await reverseBatchAllocations(
-      voucher.inventory || [],
-      voucher.voucher_type,
-      voucher.company_id,
-    );
+      // Reverse bill allocation movement first so bills closing/debit/credit remain accurate.
+      if (voucherBillAllocations.length > 0) {
+        console.log(
+          "[DELETE VOUCHER] Reversing bill allocations in bills collection...",
+        );
+        await applyVoucherAllocationsToBills({
+          db,
+          companyId: voucher.company_id,
+          voucherType: voucher.voucher_type,
+          voucherDate: voucher.voucher_date,
+          voucherId: voucher.id,
+          voucherNumber: voucher.voucher_number,
+          allocations: voucherBillAllocations,
+          reverse: true,
+        });
+      }
+
+      console.log("[DELETE VOUCHER] Reversing batch allocations...");
+      await reverseBatchAllocations(
+        voucher.inventory || [],
+        voucher.voucher_type,
+        voucher.company_id,
+      );
+    } else {
+      console.log("[DELETE VOUCHER] Voucher is optional (on hold) — skipping batch/bill reversal.");
+    }
   }
 
   const voucherCompanyId = voucher?.company_id;
@@ -2763,6 +2866,7 @@ export async function getVoucherHistory(
   const db = getDb();
   const match = {
     company_id: companyId,
+    optional: { $ne: true },
     voucher_date: {
       $gte: dateFrom,
       $lte: dateTo,
@@ -2793,6 +2897,7 @@ export async function getVoucherHistory(
           voucher_number: 1,
           voucher_date: 1,
           voucher_type: 1,
+          is_pos: 1,
           "ledger.name": 1,
           total_amount: 1,
           net_amount: 1,
@@ -2808,6 +2913,7 @@ export async function getVoucherHistory(
     voucher_number: v.voucher_number,
     voucher_date: v.voucher_date,
     voucher_type: v.voucher_type,
+    is_pos: v.is_pos === true,
     ledger_name: v.ledger?.name || "",
     total_amount: v.total_amount || 0,
     net_amount: v.net_amount || 0,
@@ -2824,6 +2930,7 @@ export async function getSalesRegister(companyId, dateFrom, dateTo) {
       company_id: companyId,
       voucher_type: { $in: ["sales", "credit-note"] },
       voucher_date: { $gte: dateFrom, $lte: dateTo },
+      optional: { $ne: true },
     })
     .sort({ voucher_date: -1 })
     .toArray();
@@ -2856,6 +2963,7 @@ export async function getPurchaseRegister(companyId, dateFrom, dateTo) {
       company_id: companyId,
       voucher_type: { $in: ["purchase", "debit-note"] },
       voucher_date: { $gte: dateFrom, $lte: dateTo },
+      optional: { $ne: true },
     })
     .sort({ voucher_date: -1 })
     .toArray();
@@ -3127,8 +3235,6 @@ export async function updateItemStockLevels(itemId) {
         inward_rate: totalInwardRate,
         inward_value: totalInwardValue,
         outward_qty: totalOutward,
-                openingBalance: "",
-                closingBalance: "",
         outward_rate: totalOutwardRate,
         outward_value: totalOutwardValue,
         closing_qty: totalClosing,
@@ -3136,6 +3242,8 @@ export async function updateItemStockLevels(itemId) {
         closing_value: totalClosingValue,
         updated_at: new Date(),
       },
+      // Remove any stale legacy fields written by a previous code version
+      $unset: { openingBalance: "", closingBalance: "" },
     },
   );
 }

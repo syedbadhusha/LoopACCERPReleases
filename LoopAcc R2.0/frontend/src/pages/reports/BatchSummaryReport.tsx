@@ -400,9 +400,10 @@ const BatchSummaryReport = () => {
             {loading ? (
               <div className="py-8 text-center">Loading...</div>
             ) : (
+              <div className="overflow-x-auto">
               <Table className="border border-border">
                 <TableHeader>
-                  <TableRow>
+                  <TableRow className="border-0">
                     <TableHead rowSpan={2} style={{ minWidth: 260 }} className="align-middle border-r">Particulars</TableHead>
                     <TableHead colSpan={3} className="text-center border-r border-b">Opening Balance</TableHead>
                     <TableHead colSpan={3} className="text-center border-r border-b">Inward</TableHead>
@@ -472,6 +473,7 @@ const BatchSummaryReport = () => {
                   </TableRow>
                 </TableBody>
               </Table>
+              </div>
             )}
           </CardContent>
         </Card>

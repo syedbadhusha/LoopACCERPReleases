@@ -31,3 +31,27 @@ export const getCompanyTaxLabel = (company?: CompanyLike | null): string => {
   if (taxType === 'VAT') return 'VAT Amount';
   return 'Tax Amount';
 };
+
+/** Returns true when bill-wise (bill allocation) is enabled at the company level.
+ *  Defaults to TRUE so existing companies without the setting keep working. */
+export const isCompanyBillsEnabled = (company?: CompanyLike | null): boolean => {
+  const v = company?.settings?.enable_bills;
+  if (v === undefined || v === null || v === '') return true; // default on
+  return v === 'true' || v === true;
+};
+
+/** Returns true when batch tracking is enabled at the company level.
+ *  Defaults to TRUE so existing companies without the setting keep working. */
+export const isCompanyBatchesEnabled = (company?: CompanyLike | null): boolean => {
+  const v = company?.settings?.enable_batches;
+  if (v === undefined || v === null || v === '') return true; // default on
+  return v === 'true' || v === true;
+};
+
+/** Returns true when the POS module is enabled at the company level.
+ *  Defaults to FALSE — must be explicitly enabled in Settings. */
+export const isCompanyPOSEnabled = (company?: CompanyLike | null): boolean => {
+  const v = company?.settings?.enable_pos;
+  if (v === undefined || v === null || v === '') return false; // default off
+  return v === 'true' || v === true;
+};

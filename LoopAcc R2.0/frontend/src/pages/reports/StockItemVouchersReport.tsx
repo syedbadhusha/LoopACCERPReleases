@@ -420,17 +420,17 @@ const StockItemVouchersReport = () => {
 
     const voucherType = String(row?.rawVoucherType || '').toLowerCase();
     const typeMap: Record<string, string> = {
-      sales: '/sales',
-      'credit-note': '/credit-note',
-      purchase: '/purchase',
-      'debit-note': '/debit-note',
-      payment: '/payment',
-      receipt: '/receipt',
+      sales: '/vouchers?type=sales',
+      'credit-note': '/vouchers?type=credit-note',
+      purchase: '/vouchers?type=purchase',
+      'debit-note': '/vouchers?type=debit-note',
+      payment: '/vouchers?type=payment',
+      receipt: '/vouchers?type=receipt',
     };
 
     const path = typeMap[voucherType];
     if (!path) return;
-    navigate(`${path}?edit=${encodeURIComponent(voucherId)}`, {
+    navigate(`${path}&edit=${encodeURIComponent(voucherId)}`, {
       state: {
         returnTo: `/reports/stock-item-vouchers?itemId=${encodeURIComponent(selectedItemId)}${queryBatchId ? `&batchId=${encodeURIComponent(queryBatchId)}` : ''}&dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}`,
       },

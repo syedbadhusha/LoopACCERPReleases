@@ -14,7 +14,6 @@ const DEFAULT_SETTINGS = {
   date_format: "dd/mm/yyyy",
   gst_applicable: "true",
   show_discount_column: "false",
-  print_after_save: "false",
   email_invoice: "false",
   item_wise_discount_enabled: "false",
 };

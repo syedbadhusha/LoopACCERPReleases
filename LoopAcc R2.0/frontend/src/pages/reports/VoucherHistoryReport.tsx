@@ -16,6 +16,7 @@ interface VoucherEntry {
   voucher_number: string;
   voucher_date: string;
   voucher_type: string;
+  is_pos: boolean;
   ledger_name: string;
   total_amount: number;
   net_amount: number;
@@ -75,6 +76,7 @@ const VoucherHistoryReport = () => {
         voucher_number: item.voucher_number,
         voucher_date: item.voucher_date,
         voucher_type: item.voucher_type,
+        is_pos: item.is_pos === true,
         ledger_name: item.ledger_name || '',
         total_amount: item.total_amount,
         net_amount: item.net_amount,
@@ -100,10 +102,16 @@ useEffect(() => {
     }
   }, [selectedCompany, dateFrom, dateTo, voucherType]);
 
-const handleEdit = (voucherId: string, voucherType: string) => {
+const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
     localStorage.setItem('voucherHistory_dateFrom', dateFrom);
     localStorage.setItem('voucherHistory_dateTo', dateTo);
     localStorage.setItem('voucherHistory_voucherType', voucherType);
+
+    // POS vouchers open in the POS screen
+    if (isPos) {
+      navigate(`/pos?edit=${voucherId}`, { state: { returnTo: '/reports/voucher-history' } });
+      return;
+    }
 
     const typeMap: Record<string, string> = {
       sales: '/vouchers?type=sales',
@@ -337,7 +345,7 @@ const handleEdit = (voucherId: string, voucherType: string) => {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleEdit(item.id, item.voucher_type)}
+                            onClick={() => handleEdit(item.id, item.voucher_type, item.is_pos)}
                           >
                             <Edit className="h-4 w-4" />
                           </Button>

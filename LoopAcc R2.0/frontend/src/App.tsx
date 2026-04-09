@@ -16,6 +16,7 @@ const CompanyLogin = lazy(() => import("./pages/CompanyLogin"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const VoucherForm = lazy(() => import("./pages/forms/VoucherForm"));
+const POSScreen = lazy(() => import("./pages/pos/POSScreen"));
 const LedgerMaster = lazy(() => import("./pages/masters/LedgerMaster"));
 const ItemMaster = lazy(() => import("./pages/masters/ItemMaster"));
 const UOMMaster = lazy(() => import("./pages/masters/UOMMaster"));
@@ -117,6 +118,11 @@ const App: React.FC = () => (
                 <Route path="/vouchers" element={
                   <ProtectedRoute requireCompanyLogin>
                     <VoucherForm />
+                  </ProtectedRoute>
+                } />
+                <Route path="/pos" element={
+                  <ProtectedRoute requireCompanyLogin>
+                    <POSScreen />
                   </ProtectedRoute>
                 } />
                 <Route path="/sales" element={<Navigate to="/vouchers" replace />} />

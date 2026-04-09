@@ -664,6 +664,20 @@ export async function initializeDatabase() {
       .createIndex({ company_id: 1, closing: 1 });
     await database.collection("bills").createIndex({ voucher_id: 1 });
 
+    // Performance index for voucher number uniqueness checks
+    await database
+      .collection("vouchers")
+      .createIndex(
+        { company_id: 1, voucher_type_id: 1, voucher_number: 1 },
+        {
+          name: "voucher_number_lookup",
+          partialFilterExpression: {
+            voucher_type_id: { $exists: true, $type: "string" },
+            voucher_number: { $exists: true, $gt: "" },
+          },
+        },
+      );
+
     console.log("✓ MongoDB collections and indexes are ready");
   } catch (err) {
     console.error("MongoDB initialization error:", err.message || err);

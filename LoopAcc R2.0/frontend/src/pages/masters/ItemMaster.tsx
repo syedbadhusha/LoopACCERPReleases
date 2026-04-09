@@ -13,10 +13,10 @@ import {
 } from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Plus, Edit, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Edit, Trash2, Upload, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
-import { getCompanyTaxType, isCompanyTaxEnabled } from '@/lib/companyTax';
+import { getCompanyTaxType, isCompanyTaxEnabled, isCompanyBatchesEnabled, isCompanyPOSEnabled } from '@/lib/companyTax';
 
 const normalizeBatchNumber = (value: unknown): string =>
   String(value || '')
@@ -32,6 +32,8 @@ const ItemMaster = () => {
   const { selectedCompany } = useCompany();
   const isTaxEnabled = isCompanyTaxEnabled(selectedCompany);
   const companyTaxType = getCompanyTaxType(selectedCompany);
+  const companyBatchesEnabled = isCompanyBatchesEnabled(selectedCompany);
+  const companyPOSEnabled = isCompanyPOSEnabled(selectedCompany);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [uoms, setUoms] = useState<any[]>([]);
@@ -51,6 +53,10 @@ const ItemMaster = () => {
   const [stockCatDialogOpen, setStockCatDialogOpen] = useState(false);
   const [stockCatSubmitting, setStockCatSubmitting] = useState(false);
   const [quickStockCat, setQuickStockCat] = useState({ name: '', alias: '' });
+
+  // Standard Rates dialog
+  const [standardRatesDialogOpen, setStandardRatesDialogOpen] = useState(false);
+  const [standardRateEntry, setStandardRateEntry] = useState({ date: new Date().toISOString().split('T')[0], cost: 0, rate: 0 });
 
   const handleCreateQuickUom = async () => {
     if (!quickUom.name.trim() || !selectedCompany) return;
@@ -125,8 +131,7 @@ const ItemMaster = () => {
     opening_stock: 0,
     opening_rate: 0,
     opening_value: 0,
-    purchase_rate: 0,
-    sales_rate: 0,
+    standard_rates: [] as any[],
     // Current tax fields - will be conditional based on tax_type
     tax_rate: 0, // VAT or combined tax
     igst_rate: 0, // GST - Integrated
@@ -136,7 +141,8 @@ const ItemMaster = () => {
     enable_batches: false,
     batch_details: [],
     opening_balance_mode: 'without_batch', // 'without_batch' or 'with_batch'
-    tax_history: [] // Array of {date, tax_rate, igst_rate, cgst_rate, sgst_rate}
+    tax_history: [], // Array of {date, tax_rate, igst_rate, cgst_rate, sgst_rate}
+    image: '',
   });
 
   useEffect(() => {
@@ -210,8 +216,7 @@ const ItemMaster = () => {
       opening_stock: 0,
       opening_rate: 0,
       opening_value: 0,
-      purchase_rate: 0,
-      sales_rate: 0,
+      standard_rates: [],
       tax_rate: 0,
       igst_rate: 0,
       cgst_rate: 0,
@@ -220,7 +225,8 @@ const ItemMaster = () => {
       enable_batches: false,
       batch_details: [],
       opening_balance_mode: 'without_batch',
-      tax_history: []
+      tax_history: [],
+      image: '',
     });
     setEditingItem(null);
     setShowForm(false);
@@ -242,8 +248,7 @@ const ItemMaster = () => {
       opening_stock: item.opening_stock || 0,
       opening_rate: item.opening_rate || 0,
       opening_value: item.opening_value || 0,
-      purchase_rate: item.purchase_rate || 0,
-      sales_rate: item.sales_rate || 0,
+      standard_rates: item.standard_rates || [],
       tax_rate: item.tax_rate || 0,
       igst_rate: item.igst_rate || 0,
       cgst_rate: item.cgst_rate || 0,
@@ -252,7 +257,8 @@ const ItemMaster = () => {
       enable_batches: item.enable_batches || false,
       batch_details: item.batch_details || [],
       opening_balance_mode: mode,
-      tax_history: item.tax_history || []
+      tax_history: item.tax_history || [],
+      image: item.image || '',
     });
     setEditingItem(item);
     setShowForm(true);
@@ -426,11 +432,11 @@ const ItemMaster = () => {
         opening_stock: formData.opening_stock,
         opening_rate: formData.opening_rate,
         opening_value: formData.opening_value,
-        purchase_rate: formData.purchase_rate,
-        sales_rate: formData.sales_rate,
+        standard_rates: formData.standard_rates,
         enable_batches: formData.opening_balance_mode === 'with_batch',
         company_id: selectedCompany.id,
-        batch_details: batchDetailsToSave
+        batch_details: batchDetailsToSave,
+        image: formData.image || '',
       };
 
       const mergedTaxHistory = buildMergedTaxHistory();
@@ -713,6 +719,44 @@ const ItemMaster = () => {
                       placeholder="Enter alias"
                     />
                   </div>
+
+                  {/* Item Image for POS */}
+                  {companyPOSEnabled && <div className="md:col-span-2">
+                    <Label>Item Image <span className="text-muted-foreground text-xs">(for POS display)</span></Label>
+                    <div className="flex items-start gap-4 mt-1">
+                      {formData.image ? (
+                        <div className="relative">
+                          <img src={formData.image} alt="item" className="h-20 w-20 object-cover rounded border" />
+                          <button
+                            type="button"
+                            onClick={() => setFormData(p => ({ ...p, image: '' }))}
+                            className="absolute -top-2 -right-2 bg-destructive text-white rounded-full w-5 h-5 flex items-center justify-center"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="h-20 w-20 border-2 border-dashed rounded flex items-center justify-center text-muted-foreground">
+                          <Upload className="h-6 w-6" />
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          className="cursor-pointer"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = (ev) => setFormData(p => ({ ...p, image: ev.target?.result as string }));
+                            reader.readAsDataURL(file);
+                          }}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">Upload JPG, PNG or GIF. Shown as thumbnail in POS screen.</p>
+                      </div>
+                    </div>
+                  </div>}
                   
                   {/* HSN Code - Only show when tax is enabled */}
                   {isTaxEnabled && (
@@ -832,58 +876,56 @@ const ItemMaster = () => {
                     </div>
                   )}
 
-                  <div>
-                    <Label>Purchase Rate</Label>
-                    <Input 
-                      type="number"
-                      value={formData.purchase_rate ?? 0}
-                      onChange={(e) => setFormData({...formData, purchase_rate: parseFloat(e.target.value) || 0})}
-                      step="0.01"
-                      min="0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label>Sales Rate</Label>
-                    <Input 
-                      type="number"
-                      value={formData.sales_rate}
-                      onChange={(e) => setFormData({...formData, sales_rate: parseFloat(e.target.value) || 0})}
-                      step="0.01"
-                      min="0"
-                    />
-                  </div>
+                </div>
+
+                {/* Standard Rates */}
+                <div className="flex items-center gap-3 border-t pt-4 mt-2">
+                  <Label className="font-medium shrink-0">Standard Rates</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setStandardRateEntry({ date: new Date().toISOString().split('T')[0], cost: 0, rate: 0 });
+                      setStandardRatesDialogOpen(true);
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" />
+                    Add Standard Rate
+                  </Button>
+                  {formData.standard_rates && formData.standard_rates.length > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {formData.standard_rates.length} rate{formData.standard_rates.length !== 1 ? 's' : ''} defined &mdash; latest: ₹{Number([...(formData.standard_rates || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.rate || 0).toFixed(2)}
+                    </span>
+                  )}
                 </div>
 
                 {/* Opening Balance Mode */}
                 <div className="border-t pt-6 mt-6">
                   <Label className="font-medium mb-3 block">Opening Balance</Label>
-                  <div className="flex gap-6 mb-6">
-                    <div className="flex items-center gap-2">
+                  {companyBatchesEnabled && (
+                    <div className="flex items-center gap-2 mb-6">
                       <input
-                        type="radio"
-                        id="mode_without_batch"
-                        name="opening_balance_mode"
-                        value="without_batch"
-                        checked={formData.opening_balance_mode === 'without_batch'}
-                        onChange={(e) => setFormData({...formData, opening_balance_mode: 'without_batch'})}
-                        className="w-4 h-4"
-                      />
-                      <Label htmlFor="mode_without_batch" className="cursor-pointer">Without Batch</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="radio"
+                        type="checkbox"
                         id="mode_with_batch"
-                        name="opening_balance_mode"
-                        value="with_batch"
                         checked={formData.opening_balance_mode === 'with_batch'}
-                        onChange={(e) => setFormData({...formData, opening_balance_mode: 'with_batch'})}
-                        className="w-4 h-4"
+                        onChange={async (e) => {
+                          const newVal = e.target.checked;
+                          if (!newVal && editingItem?.id && selectedCompany) {
+                            const resp = await fetch(`http://localhost:5000/api/batch-allocations?itemId=${editingItem.id}&companyId=${selectedCompany.id}`);
+                            const json = await resp.json();
+                            if (json.data && json.data.length > 0) {
+                              toast({ title: 'Cannot disable', description: `This item has ${json.data.length} existing batch record(s). Delete them before disabling batch tracking.`, variant: 'destructive' });
+                              return;
+                            }
+                          }
+                          setFormData({...formData, opening_balance_mode: newVal ? 'with_batch' : 'without_batch'});
+                        }}
+                        className="w-4 h-4 rounded border-gray-300"
                       />
                       <Label htmlFor="mode_with_batch" className="cursor-pointer">With Batch</Label>
                     </div>
-                  </div>
+                  )}
 
                 {formData.opening_balance_mode === 'without_batch' && (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1066,22 +1108,15 @@ const ItemMaster = () => {
                       <TableCell className="text-right text-green-600 font-semibold">{balance.inward}</TableCell>
                       <TableCell className="text-right text-red-600 font-semibold">{balance.outward}</TableCell>
                       <TableCell className="text-right font-bold bg-blue-50">{balance.closingBalance}</TableCell>
-                      <TableCell>₹{item.sales_rate?.toFixed(2)}</TableCell>
+                      <TableCell>
+                        {(() => {
+                          const sorted = [...(item.standard_rates || [])].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                          const latest = sorted[0];
+                          return latest ? `₹${Number(latest.rate || 0).toFixed(2)}` : (item.sales_rate ? `₹${item.sales_rate.toFixed(2)}` : '—');
+                        })()}
+                      </TableCell>
                       <TableCell>
                         <div className="flex space-x-2">
-                          {isTaxEnabled && (
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              onClick={() => {
-                                setShowTaxHistory(true);
-                                setSelectedItemForHistory(item);
-                              }}
-                              title="View tax history"
-                            >
-                              📅
-                            </Button>
-                          )}
                           <Button variant="outline" size="sm" onClick={() => handleEdit(item)}>
                             <Edit className="h-4 w-4" />
                           </Button>
@@ -1100,81 +1135,76 @@ const ItemMaster = () => {
         </div>
       </div>
 
-      {/* Tax History Modal */}
-      {showTaxHistory && selectedItemForHistory && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-2xl max-h-96 overflow-y-auto">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <CardTitle>Tax History - {selectedItemForHistory.name}</CardTitle>
-              <button
-                onClick={() => {
-                  setShowTaxHistory(false);
-                  setSelectedItemForHistory(null);
-                }}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                ✕
-              </button>
-            </CardHeader>
-            <CardContent>
-              {selectedItemForHistory.tax_history && selectedItemForHistory.tax_history.length > 0 ? (
-                <div className="space-y-4">
-                  {selectedItemForHistory.tax_history
-                    .slice()
-                    .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                    .map((entry: any, idx: number) => (
-                      <div key={idx} className="border rounded p-3 bg-white">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="font-medium">Effective Date: {entry.date}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(entry.date).toLocaleDateString('en-US', { 
-                                weekday: 'long', 
-                                year: 'numeric', 
-                                month: 'long', 
-                                day: 'numeric' 
-                              })}
-                            </p>
-                          </div>
-                          {idx === 0 && (
-                            <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">
-                              Current Active
-                            </span>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                          {companyTaxType === 'GST' ? (
-                            <>
-                              <div>
-                                <span className="text-muted-foreground">IGST:</span>
-                                <p className="font-medium">{entry.igst_rate}%</p>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">CGST:</span>
-                                <p className="font-medium">{entry.cgst_rate}%</p>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">SGST:</span>
-                                <p className="font-medium">{entry.sgst_rate}%</p>
-                              </div>
-                            </>
-                          ) : (
-                            <div>
-                              <span className="text-muted-foreground">Tax Rate:</span>
-                              <p className="font-medium">{entry.tax_rate}%</p>
-                            </div>
-                          )}
-                        </div>
+      {/* Tax History Dialog */}
+      <Dialog
+        open={showTaxHistory}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowTaxHistory(false);
+            setSelectedItemForHistory(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Tax History - {selectedItemForHistory?.name}</DialogTitle>
+          </DialogHeader>
+          {selectedItemForHistory?.tax_history && selectedItemForHistory.tax_history.length > 0 ? (
+            <div className="space-y-4">
+              {selectedItemForHistory.tax_history
+                .slice()
+                .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                .map((entry: any, idx: number) => (
+                  <div key={idx} className="border rounded p-3 bg-muted/30">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <p className="font-medium">Effective Date: {entry.date}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(entry.date).toLocaleDateString('en-US', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
+                        </p>
                       </div>
-                    ))}
-                </div>
-              ) : (
-                <p className="text-muted-foreground italic">No tax history recorded yet.</p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+                      {idx === 0 && (
+                        <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">
+                          Current Active
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                      {companyTaxType === 'GST' ? (
+                        <>
+                          <div>
+                            <span className="text-muted-foreground">IGST:</span>
+                            <p className="font-medium">{entry.igst_rate}%</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">CGST:</span>
+                            <p className="font-medium">{entry.cgst_rate}%</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">SGST:</span>
+                            <p className="font-medium">{entry.sgst_rate}%</p>
+                          </div>
+                        </>
+                      ) : (
+                        <div>
+                          <span className="text-muted-foreground">Tax Rate:</span>
+                          <p className="font-medium">{entry.tax_rate}%</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <p className="text-muted-foreground italic">No tax history recorded yet.</p>
+          )}
+        </DialogContent>
+      </Dialog>
       {/* Quick Create UOM Dialog */}
       <Dialog open={uomDialogOpen} onOpenChange={(o) => { if (!o) { setUomDialogOpen(false); setQuickUom({ name: '', symbol: '', decimal_places: 2 }); } }}>
         <DialogContent className="max-w-sm">
@@ -1226,6 +1256,104 @@ const ItemMaster = () => {
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => { setStockCatDialogOpen(false); setQuickStockCat({ name: '', alias: '' }); }}>Cancel</Button>
             <Button type="button" onClick={handleCreateQuickStockCat} disabled={stockCatSubmitting || !quickStockCat.name.trim()}>{stockCatSubmitting ? 'Creating...' : 'Create Stock Category'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Standard Rate Dialog */}
+      <Dialog open={standardRatesDialogOpen} onOpenChange={(o) => { if (!o) setStandardRatesDialogOpen(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Standard Rates</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Effective Date *</Label>
+                <Input
+                  type="date"
+                  value={standardRateEntry.date}
+                  onChange={(e) => setStandardRateEntry(p => ({ ...p, date: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label>Cost (Purchase Rate)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={standardRateEntry.cost}
+                  onChange={(e) => setStandardRateEntry(p => ({ ...p, cost: parseFloat(e.target.value) || 0 }))}
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <Label>Rate (Sales Rate)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={standardRateEntry.rate}
+                  onChange={(e) => setStandardRateEntry(p => ({ ...p, rate: parseFloat(e.target.value) || 0 }))}
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!standardRateEntry.date}
+              onClick={() => {
+                const entry = { date: standardRateEntry.date, cost: standardRateEntry.cost, rate: standardRateEntry.rate };
+                setFormData(p => {
+                  const existing = (p.standard_rates || []).filter((r: any) => r.date !== entry.date);
+                  return { ...p, standard_rates: [...existing, entry] };
+                });
+                setStandardRateEntry({ date: new Date().toISOString().split('T')[0], cost: 0, rate: 0 });
+                toast({ title: 'Rate Added', description: `Standard rate for ${standardRateEntry.date} added.` });
+              }}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Add Rate
+            </Button>
+
+            {/* History table inside dialog */}
+            {formData.standard_rates && formData.standard_rates.length > 0 && (
+              <div className="border rounded-md overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium">Effective Date</th>
+                      <th className="text-right px-3 py-2 font-medium">Cost (Purchase)</th>
+                      <th className="text-right px-3 py-2 font-medium">Rate (Sales)</th>
+                      <th className="px-3 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...(formData.standard_rates || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((sr: any, idx: number) => (
+                      <tr key={idx} className={idx === 0 ? 'bg-primary/5 font-semibold' : 'border-t'}>
+                        <td className="px-3 py-1.5">
+                          {sr.date}
+                          {idx === 0 && <span className="ml-1.5 text-[10px] bg-primary text-primary-foreground rounded px-1">Current</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-right">₹{Number(sr.cost || 0).toFixed(2)}</td>
+                        <td className="px-3 py-1.5 text-right">₹{Number(sr.rate || 0).toFixed(2)}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setFormData(p => ({ ...p, standard_rates: (p.standard_rates || []).filter((_: any, i: number) => i !== (p.standard_rates || []).indexOf(sr)) }))}
+                            className="text-destructive hover:text-destructive/80"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setStandardRatesDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -216,6 +216,19 @@ export async function createLedger(doc) {
   const db = getDb();
   const id = doc.id || uuidv4();
 
+  // Case-insensitive name uniqueness check
+  if (doc.name && doc.company_id) {
+    const nameDup = await db.collection("ledgers").findOne({
+      company_id: doc.company_id,
+      name: { $regex: new RegExp(`^${doc.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+    });
+    if (nameDup) {
+      const err = new Error(`Ledger "${doc.name}" already exists`);
+      err.statusCode = 409;
+      throw err;
+    }
+  }
+
   // Transform ledger_group_id to group_id if present (for backwards compatibility)
   const docToInsert = { ...doc };
   if (docToInsert.ledger_group_id && !docToInsert.group_id) {
@@ -270,6 +283,20 @@ export async function updateLedger(id, update) {
   // Get the existing ledger to check if name is being updated
   const existingLedger = await db.collection("ledgers").findOne({ id });
   if (!existingLedger) throw new Error("Ledger not found");
+
+  // Case-insensitive name uniqueness check (skip if name unchanged)
+  if (update.name && update.name.trim().toLowerCase() !== (existingLedger.name || '').toLowerCase()) {
+    const nameDup = await db.collection("ledgers").findOne({
+      company_id: existingLedger.company_id,
+      name: { $regex: new RegExp(`^${update.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      id: { $ne: id },
+    });
+    if (nameDup) {
+      const err = new Error(`Ledger "${update.name}" already exists`);
+      err.statusCode = 409;
+      throw err;
+    }
+  }
 
   // Transform ledger_group_id to group_id if present (for backwards compatibility)
   const updateData = { ...update };

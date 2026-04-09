@@ -18,6 +18,20 @@ export async function getUomsByCompany(companyId) {
 export async function createUom(doc) {
   const db = getDb();
   const id = doc.id || uuidv4();
+
+  // Case-insensitive name uniqueness check
+  if (doc.name && doc.company_id) {
+    const nameDup = await db.collection("uom_master").findOne({
+      company_id: doc.company_id,
+      name: { $regex: new RegExp(`^${doc.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+    });
+    if (nameDup) {
+      const err = new Error(`UOM "${doc.name}" already exists`);
+      err.statusCode = 409;
+      throw err;
+    }
+  }
+
   const toInsert = {
     id,
     ...doc,
@@ -31,6 +45,24 @@ export async function createUom(doc) {
 
 export async function updateUom(id, update) {
   const db = getDb();
+
+  // Case-insensitive name uniqueness check (skip if name unchanged)
+  if (update.name) {
+    const existing = await db.collection("uom_master").findOne({ id });
+    if (existing && update.name.trim().toLowerCase() !== (existing.name || '').toLowerCase()) {
+      const nameDup = await db.collection("uom_master").findOne({
+        company_id: existing.company_id,
+        name: { $regex: new RegExp(`^${update.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        id: { $ne: id },
+      });
+      if (nameDup) {
+        const err = new Error(`UOM "${update.name}" already exists`);
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+  }
+
   const res = await db
     .collection("uom_master")
     .findOneAndUpdate(

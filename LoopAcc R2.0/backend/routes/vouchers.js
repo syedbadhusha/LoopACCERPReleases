@@ -12,8 +12,30 @@ import {
   getOutstandingReceivables,
   getOutstandingPayables,
 } from "../services/voucherService.js";
+import { getDb } from "../db.js";
 
 const router = express.Router();
+
+// GET /api/vouchers/report/held-pos?companyId=...
+// Returns all POS vouchers with optional=true (held/on-hold bills)
+router.get("/report/held-pos", async (req, res) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: "companyId required" });
+    }
+    const db = getDb();
+    const data = await db.collection("vouchers").find({
+      company_id: String(companyId),
+      is_pos: true,
+      optional: true,
+    }).sort({ created_at: -1 }).toArray();
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("GET /api/vouchers/report/held-pos error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 // GET /api/vouchers/report/history?companyId=...&dateFrom=...&dateTo=...&voucherType=...
 // MUST be before /:id route to prevent /:id catching "report"
@@ -71,6 +93,26 @@ router.get("/", async (req, res) => {
     res.json({ success: true, data });
   } catch (error) {
     console.error("GET /api/vouchers error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET /api/vouchers/has-pos-vouchers?companyId=X&voucherTypeId=Y
+// Check if any vouchers exist for a specific POS voucher type
+router.get("/has-pos-vouchers", async (req, res) => {
+  try {
+    const { companyId, voucherTypeId } = req.query;
+    if (!companyId || !voucherTypeId) {
+      return res.status(400).json({ success: false, message: "companyId and voucherTypeId required" });
+    }
+    const db = getDb();
+    const count = await db.collection("vouchers").countDocuments({
+      company_id: String(companyId),
+      voucher_type_id: String(voucherTypeId),
+    });
+    res.json({ success: true, hasVouchers: count > 0, count });
+  } catch (error) {
+    console.error("has-pos-vouchers check error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });

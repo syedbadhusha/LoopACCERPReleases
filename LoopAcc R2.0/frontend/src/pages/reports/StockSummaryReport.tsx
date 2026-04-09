@@ -551,25 +551,25 @@ const StockSummaryReport = () => {
               <div className="overflow-x-auto">
                 <Table className="border border-border">
                   <TableHeader>
-                    <TableRow>
+                    <TableRow className="border-0">
                       <TableHead rowSpan={2} className="align-middle" style={{ minWidth: '200px' }}>Item Name</TableHead>
                       <TableHead rowSpan={2} className="align-middle" style={{ minWidth: '170px' }}>Stock Group</TableHead>
-                      <TableHead rowSpan={2} className="align-middle" style={{ minWidth: '170px' }}>Stock Category</TableHead>
-                      <TableHead colSpan={3} className="text-center border-b">Opening</TableHead>
-                      <TableHead colSpan={3} className="text-center border-b">Inward</TableHead>
-                      <TableHead colSpan={3} className="text-center border-b">Outward</TableHead>
+                      <TableHead rowSpan={2} className="align-middle border-r" style={{ minWidth: '170px' }}>Stock Category</TableHead>
+                      <TableHead colSpan={3} className="text-center border-r border-b">Opening</TableHead>
+                      <TableHead colSpan={3} className="text-center border-r border-b">Inward</TableHead>
+                      <TableHead colSpan={3} className="text-center border-r border-b">Outward</TableHead>
                       <TableHead colSpan={3} className="text-center border-b">Closing</TableHead>
                     </TableRow>
                     <TableRow>
                       <TableHead className="text-right" style={qtyColumnStyle}>Qty</TableHead>
                       <TableHead className="text-right" style={rateColumnStyle}>Rate</TableHead>
-                      <TableHead className="text-right" style={valueColumnStyle}>Amount</TableHead>
+                      <TableHead className="text-right border-r" style={valueColumnStyle}>Amount</TableHead>
                       <TableHead className="text-right" style={qtyColumnStyle}>Qty</TableHead>
                       <TableHead className="text-right" style={rateColumnStyle}>Rate</TableHead>
-                      <TableHead className="text-right" style={valueColumnStyle}>Amount</TableHead>
+                      <TableHead className="text-right border-r" style={valueColumnStyle}>Amount</TableHead>
                       <TableHead className="text-right" style={qtyColumnStyle}>Qty</TableHead>
                       <TableHead className="text-right" style={rateColumnStyle}>Rate</TableHead>
-                      <TableHead className="text-right" style={valueColumnStyle}>Amount</TableHead>
+                      <TableHead className="text-right border-r" style={valueColumnStyle}>Amount</TableHead>
                       <TableHead className="text-right" style={qtyColumnStyle}>Qty</TableHead>
                       <TableHead className="text-right" style={rateColumnStyle}>Rate</TableHead>
                       <TableHead className="text-right" style={valueColumnStyle}>Amount</TableHead>
@@ -584,16 +584,16 @@ const StockSummaryReport = () => {
                       >
                         <TableCell style={{ minWidth: '200px' }}>{item.item_name}</TableCell>
                         <TableCell style={{ minWidth: '170px' }}>{item.stock_group_name || ''}</TableCell>
-                        <TableCell style={{ minWidth: '170px' }}>{item.stock_category_name || ''}</TableCell>
+                        <TableCell className="border-r" style={{ minWidth: '170px' }}>{item.stock_category_name || ''}</TableCell>
                         <TableCell className="text-right" style={qtyColumnStyle}>{item.opening_stock.toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={rateColumnStyle}>{calculateRate(item.opening_stock, item.opening_value).toFixed(2)}</TableCell>
-                        <TableCell className="text-right" style={valueColumnStyle}>{currencySymbol} {item.opening_value.toFixed(2)}</TableCell>
+                        <TableCell className="text-right border-r" style={valueColumnStyle}>{currencySymbol} {item.opening_value.toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={qtyColumnStyle}>{item.purchases.toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={rateColumnStyle}>{calculateRate(item.purchases, item.purchase_value).toFixed(2)}</TableCell>
-                        <TableCell className="text-right" style={valueColumnStyle}>{currencySymbol} {item.purchase_value.toFixed(2)}</TableCell>
+                        <TableCell className="text-right border-r" style={valueColumnStyle}>{currencySymbol} {item.purchase_value.toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={qtyColumnStyle}>{item.sales.toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={rateColumnStyle}>{calculateRate(item.sales, item.sales_value).toFixed(2)}</TableCell>
-                        <TableCell className="text-right" style={valueColumnStyle}>{currencySymbol} {item.sales_value.toFixed(2)}</TableCell>
+                        <TableCell className="text-right border-r" style={valueColumnStyle}>{currencySymbol} {item.sales_value.toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={qtyColumnStyle}>{item.closing_stock.toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={rateColumnStyle}>{calculateRate(item.closing_stock, item.closing_value).toFixed(2)}</TableCell>
                         <TableCell className="text-right" style={valueColumnStyle}>{currencySymbol} {item.closing_value.toFixed(2)}</TableCell>
@@ -602,7 +602,7 @@ const StockSummaryReport = () => {
                     <TableRow className="font-semibold bg-muted/50">
                       <TableCell>Total</TableCell>
                       <TableCell></TableCell>
-                      <TableCell></TableCell>
+                      <TableCell className="border-r"></TableCell>
                       <TableCell style={qtyColumnStyle}></TableCell>
                       <TableCell className="text-right" style={rateColumnStyle}>
                         {calculateRate(
@@ -610,7 +610,7 @@ const StockSummaryReport = () => {
                           filteredStockData.reduce((sum, item) => sum + item.opening_value, 0)
                         ).toFixed(2)}
                       </TableCell>
-                      <TableCell className="text-right" style={valueColumnStyle}>
+                      <TableCell className="text-right border-r" style={valueColumnStyle}>
                         {currencySymbol} {filteredStockData.reduce((sum, item) => sum + item.opening_value, 0).toFixed(2)}
                       </TableCell>
                       <TableCell style={qtyColumnStyle}></TableCell>
@@ -620,7 +620,7 @@ const StockSummaryReport = () => {
                           filteredStockData.reduce((sum, item) => sum + item.purchase_value, 0)
                         ).toFixed(2)}
                       </TableCell>
-                      <TableCell className="text-right" style={valueColumnStyle}>
+                      <TableCell className="text-right border-r" style={valueColumnStyle}>
                         {currencySymbol} {filteredStockData.reduce((sum, item) => sum + item.purchase_value, 0).toFixed(2)}
                       </TableCell>
                       <TableCell style={qtyColumnStyle}></TableCell>
@@ -630,7 +630,7 @@ const StockSummaryReport = () => {
                           filteredStockData.reduce((sum, item) => sum + item.sales_value, 0)
                         ).toFixed(2)}
                       </TableCell>
-                      <TableCell className="text-right" style={valueColumnStyle}>
+                      <TableCell className="text-right border-r" style={valueColumnStyle}>
                         {currencySymbol} {filteredStockData.reduce((sum, item) => sum + item.sales_value, 0).toFixed(2)}
                       </TableCell>
                       <TableCell style={qtyColumnStyle}></TableCell>

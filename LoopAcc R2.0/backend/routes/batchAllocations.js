@@ -1,4 +1,5 @@
 import express from "express";
+import { getDb } from "../db.js";
 import {
   getBatchAllocationsByItem,
   createBatchAllocation,
@@ -7,6 +8,28 @@ import {
 } from "../services/batchAllocationService.js";
 
 const router = express.Router();
+
+/**
+ * GET /has-batches?companyId=X - Check if any batch allocations exist for company
+ */
+router.get("/has-batches", async (req, res) => {
+  const { companyId } = req.query;
+  if (!companyId) {
+    return res.status(400).json({ success: false, message: "companyId is required" });
+  }
+  try {
+    const db = getDb();
+    // Exclude the system "PRIMARY" placeholder batch — only count real user-created batches
+    const count = await db.collection("batch_allocation").countDocuments({
+      company_id: companyId,
+      batch_number: { $not: /^primary$/i }
+    });
+    res.json({ success: true, hasBatches: count > 0, count });
+  } catch (error) {
+    console.error("has-batches check error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 /**
  * GET batch allocations for an item

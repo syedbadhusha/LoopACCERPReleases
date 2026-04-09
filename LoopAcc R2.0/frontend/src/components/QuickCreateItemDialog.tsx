@@ -10,11 +10,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Upload, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 import { API_BASE_URL } from '@/config/runtime';
-import { getCompanyTaxType, isCompanyTaxEnabled } from '@/lib/companyTax';
+import { getCompanyTaxType, isCompanyTaxEnabled, isCompanyBatchesEnabled, isCompanyPOSEnabled } from '@/lib/companyTax';
 
 const API_HOST_URL = API_BASE_URL.replace(/\/api$/, '');
 
@@ -42,6 +42,8 @@ const QuickCreateItemDialog = ({
   const { selectedCompany } = useCompany();
   const isTaxEnabled = isCompanyTaxEnabled(selectedCompany);
   const companyTaxType = getCompanyTaxType(selectedCompany);
+  const companyBatchesEnabled = isCompanyBatchesEnabled(selectedCompany);
+  const companyPOSEnabled = isCompanyPOSEnabled(selectedCompany);
   const [loading, setLoading] = useState(false);
   const [uoms, setUoms] = useState<UOM[]>([]);
   const [stockGroups, setStockGroups] = useState<any[]>([]);
@@ -56,6 +58,10 @@ const QuickCreateItemDialog = ({
   const [stockCatSubmitting, setStockCatSubmitting] = useState(false);
   const [quickStockCat, setQuickStockCat] = useState({ name: '', alias: '' });
 
+  // Standard Rates dialog
+  const [standardRatesDialogOpen, setStandardRatesDialogOpen] = useState(false);
+  const [standardRateEntry, setStandardRateEntry] = useState({ date: new Date().toISOString().split('T')[0], cost: 0, rate: 0 });
+
   const [formData, setFormData] = useState({
     name: '',
     uom_id: '',
@@ -66,8 +72,7 @@ const QuickCreateItemDialog = ({
     opening_stock: 0,
     opening_rate: 0,
     opening_value: 0,
-    purchase_rate: 0,
-    sales_rate: 0,
+    standard_rates: [] as any[],
     tax_rate: 0,
     igst_rate: 0,
     cgst_rate: 0,
@@ -76,6 +81,7 @@ const QuickCreateItemDialog = ({
     opening_balance_mode: 'without_batch',
     batch_details: [] as any[],
     tax_history: [] as any[],
+    image: '',
   });
 
   useEffect(() => {
@@ -108,11 +114,12 @@ const QuickCreateItemDialog = ({
       name: '', uom_id: '', stock_group_id: '', stock_category_id: '',
       alias: '', hsn_code: '',
       opening_stock: 0, opening_rate: 0, opening_value: 0,
-      purchase_rate: 0, sales_rate: 0,
+      standard_rates: [],
       tax_rate: 0, igst_rate: 0, cgst_rate: 0, sgst_rate: 0,
       tax_effective_date: new Date().toISOString().split('T')[0],
       opening_balance_mode: 'without_batch',
       batch_details: [], tax_history: [],
+      image: '',
     });
   };
 
@@ -291,6 +298,8 @@ const QuickCreateItemDialog = ({
         uom_id: formData.uom_id,
         stock_group_id: formData.stock_group_id,
         stock_category_id: formData.stock_category_id,
+        image: formData.image || '',
+        standard_rates: formData.standard_rates || [],
         hsn_code: formData.hsn_code,
         opening_stock: formData.opening_stock,
         opening_rate: formData.opening_rate,
@@ -329,8 +338,9 @@ const QuickCreateItemDialog = ({
         igst_rate: Number(formData.igst_rate) || 0,
         cgst_rate: Number(formData.cgst_rate) || 0,
         sgst_rate: Number(formData.sgst_rate) || 0,
-        sales_rate: Number(formData.sales_rate) || 0,
-        purchase_rate: Number(formData.purchase_rate) || 0,
+        standard_rates: formData.standard_rates || [],
+        sales_rate: (() => { const sr = [...(formData.standard_rates || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); return sr[0] ? Number(sr[0].rate) : 0; })(),
+        purchase_rate: (() => { const sr = [...(formData.standard_rates || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); return sr[0] ? Number(sr[0].cost) : 0; })(),
       });
       handleClose();
     } catch (err: any) {
@@ -414,6 +424,44 @@ const QuickCreateItemDialog = ({
                 placeholder="Enter alias"
               />
             </div>
+            {companyPOSEnabled && (
+              <div className="md:col-span-2">
+                <Label>Item Image <span className="text-muted-foreground text-xs">(for POS display)</span></Label>
+                <div className="flex items-start gap-4 mt-1">
+                  {formData.image ? (
+                    <div className="relative">
+                      <img src={formData.image} alt="item" className="h-20 w-20 object-cover rounded border" />
+                      <button
+                        type="button"
+                        onClick={() => setFormData(p => ({ ...p, image: '' }))}
+                        className="absolute -top-2 -right-2 bg-destructive text-white rounded-full w-5 h-5 flex items-center justify-center"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="h-20 w-20 border-2 border-dashed rounded flex items-center justify-center text-muted-foreground">
+                      <Upload className="h-6 w-6" />
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      className="cursor-pointer"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setFormData(p => ({ ...p, image: ev.target?.result as string }));
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Upload JPG, PNG or GIF. Shown as thumbnail in POS screen.</p>
+                  </div>
+                </div>
+              </div>
+            )}
             {isTaxEnabled && (
               <div>
                 <Label>HSN Code</Label>
@@ -485,49 +533,49 @@ const QuickCreateItemDialog = ({
                 )}
               </div>
             )}
-            <div>
-              <Label>Purchase Rate</Label>
-              <Input
-                type="number"
-                value={formData.purchase_rate}
-                onChange={(e) => setFormData({ ...formData, purchase_rate: parseFloat(e.target.value) || 0 })}
-                step="0.01" min="0"
-              />
-            </div>
-            <div>
-              <Label>Sales Rate</Label>
-              <Input
-                type="number"
-                value={formData.sales_rate}
-                onChange={(e) => setFormData({ ...formData, sales_rate: parseFloat(e.target.value) || 0 })}
-                step="0.01" min="0"
-              />
-            </div>
+          </div>
+
+          {/* Standard Rates */}
+          <div className="flex items-center gap-3 border-t pt-4 mt-2">
+            <Label className="font-medium shrink-0">Standard Rates</Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setStandardRateEntry({ date: new Date().toISOString().split('T')[0], cost: 0, rate: 0 });
+                setStandardRatesDialogOpen(true);
+              }}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Add Standard Rate
+            </Button>
+            {formData.standard_rates && formData.standard_rates.length > 0 && (() => {
+              const sorted = [...(formData.standard_rates || [])].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+              const latest = sorted[0];
+              return (
+                <span className="text-xs text-muted-foreground">
+                  {formData.standard_rates.length} rate{formData.standard_rates.length > 1 ? 's' : ''} defined — latest: ₹{Number(latest?.rate || 0).toFixed(2)}
+                </span>
+              );
+            })()}
           </div>
 
           {/* Opening Balance Section */}
           <div className="border-t pt-4">
             <Label className="font-medium mb-3 block">Opening Balance</Label>
-            <div className="flex gap-6 mb-4">
-              <div className="flex items-center gap-2">
+            {companyBatchesEnabled && (
+              <div className="flex items-center gap-2 mb-4">
                 <input
-                  type="radio" id="qc_without_batch" name="qc_opening_mode" value="without_batch"
-                  checked={formData.opening_balance_mode === 'without_batch'}
-                  onChange={() => setFormData({ ...formData, opening_balance_mode: 'without_batch' })}
-                  className="w-4 h-4"
-                />
-                <Label htmlFor="qc_without_batch" className="cursor-pointer">Without Batch</Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="radio" id="qc_with_batch" name="qc_opening_mode" value="with_batch"
+                  type="checkbox"
+                  id="qc_with_batch"
                   checked={formData.opening_balance_mode === 'with_batch'}
-                  onChange={() => setFormData({ ...formData, opening_balance_mode: 'with_batch' })}
-                  className="w-4 h-4"
+                  onChange={(e) => setFormData({ ...formData, opening_balance_mode: e.target.checked ? 'with_batch' : 'without_batch', batch_details: [] })}
+                  className="w-4 h-4 rounded border-gray-300"
                 />
                 <Label htmlFor="qc_with_batch" className="cursor-pointer">With Batch</Label>
               </div>
-            </div>
+            )}
 
             {formData.opening_balance_mode === 'without_batch' && (
               <div className="grid grid-cols-3 gap-4">
@@ -739,6 +787,83 @@ const QuickCreateItemDialog = ({
             <Button type="button" onClick={handleCreateQuickStockCat} disabled={stockCatSubmitting || !quickStockCat.name.trim()}>
               {stockCatSubmitting ? 'Creating...' : 'Create Stock Category'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Standard Rates Dialog */}
+      <Dialog open={standardRatesDialogOpen} onOpenChange={(o) => { if (!o) setStandardRatesDialogOpen(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Standard Rates</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Effective Date *</Label>
+                <Input type="date" value={standardRateEntry.date} onChange={(e) => setStandardRateEntry(p => ({ ...p, date: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Cost (Purchase Rate)</Label>
+                <Input type="number" step="0.01" min="0" value={standardRateEntry.cost} onChange={(e) => setStandardRateEntry(p => ({ ...p, cost: parseFloat(e.target.value) || 0 }))} placeholder="0.00" />
+              </div>
+              <div>
+                <Label>Rate (Sales Rate)</Label>
+                <Input type="number" step="0.01" min="0" value={standardRateEntry.rate} onChange={(e) => setStandardRateEntry(p => ({ ...p, rate: parseFloat(e.target.value) || 0 }))} placeholder="0.00" />
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!standardRateEntry.date}
+              onClick={() => {
+                const entry = { date: standardRateEntry.date, cost: standardRateEntry.cost, rate: standardRateEntry.rate };
+                setFormData(p => {
+                  const existing = (p.standard_rates || []).filter((r: any) => r.date !== entry.date);
+                  return { ...p, standard_rates: [...existing, entry] };
+                });
+                setStandardRateEntry({ date: new Date().toISOString().split('T')[0], cost: 0, rate: 0 });
+              }}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Add Rate
+            </Button>
+            {formData.standard_rates && formData.standard_rates.length > 0 && (
+              <div className="border rounded-md overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium">Effective Date</th>
+                      <th className="text-right px-3 py-2 font-medium">Cost</th>
+                      <th className="text-right px-3 py-2 font-medium">Rate</th>
+                      <th className="px-3 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...(formData.standard_rates || [])].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((sr: any, idx: number) => (
+                      <tr key={idx} className={idx === 0 ? 'bg-primary/5 font-semibold' : ''}>
+                        <td className="px-3 py-1.5">
+                          {sr.date}
+                          {idx === 0 && <span className="ml-1.5 text-[10px] bg-primary text-primary-foreground rounded px-1">Current</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-right">₹{Number(sr.cost || 0).toFixed(2)}</td>
+                        <td className="px-3 py-1.5 text-right">₹{Number(sr.rate || 0).toFixed(2)}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setFormData(p => ({ ...p, standard_rates: (p.standard_rates || []).filter((_: any, i: number) => i !== (p.standard_rates || []).indexOf(sr)) }))}
+                            className="text-destructive hover:text-destructive/80"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setStandardRatesDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
