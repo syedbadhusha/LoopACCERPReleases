@@ -1,7 +1,38 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { API_BASE_URL } from '@/config/runtime';
 
+/** Compute financial year start/end for a given country and reference date */
+function computeFinancialYear(country: string, referenceDate: Date): { from: string; to: string } {
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth() + 1;
+  const code = (country || '').toUpperCase();
+
+  let startMonth = 1;
+  let fyStartYear = year;
+
+  if (['IN', 'INDIA', 'SG', 'SINGAPORE', 'GB', 'UK', 'UNITED KINGDOM'].includes(code)) {
+    startMonth = 4;
+    fyStartYear = month < 4 ? year - 1 : year;
+  } else if (['AU', 'AUSTRALIA', 'NZ', 'NEW ZEALAND'].includes(code)) {
+    startMonth = 7;
+    fyStartYear = month < 7 ? year - 1 : year;
+  } else {
+    startMonth = 1;
+    fyStartYear = year;
+  }
+
+  const fyEndYear = startMonth === 1 ? fyStartYear : fyStartYear + 1;
+  const endMonth = startMonth === 1 ? 12 : startMonth - 1;
+  const lastDay = new Date(fyEndYear, endMonth, 0).getDate();
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  return {
+    from: `${fyStartYear}-${pad(startMonth)}-01`,
+    to: `${fyEndYear}-${pad(endMonth)}-${pad(lastDay)}`,
+  };
+}
 
 interface Company {
   id: string;
@@ -21,6 +52,7 @@ interface Company {
   created_at: string;
   updated_at: string;
   books_beginning: string;
+  last_voucher_date?: string;
   settings?: {
     [key: string]: string;
   };
@@ -29,9 +61,11 @@ interface Company {
 interface CompanyUser {
   id: string;
   company_id: string;
-  user_id: string;
+  user_id: string | null;
   username: string;
-  role_id?: string;
+  full_name?: string;
+  role_id?: string | null;
+  is_admin: boolean;
   is_active: boolean;
 }
 
@@ -50,6 +84,13 @@ interface CompanyContextType {
   currentSession: CompanySession | null;
   loading: boolean;
   isRestoringSession: boolean;
+  /** Current global period used by dashboard and all reports */
+  periodFrom: string;
+  periodTo: string;
+  setPeriod: (from: string, to: string) => void;
+  /** Working date — used as default for new vouchers and Voucher History report */
+  currentDate: string;
+  setCurrentDate: (date: string) => void;
   selectCompany: (company: Company) => void;
   updateSelectedCompany: (companyData: Partial<Company>) => void;
   loginToCompany: (username: string, password: string) => Promise<{ error?: any }>;
@@ -82,12 +123,51 @@ export const CompanyProvider = ({ children }: CompanyProviderProps) => {
   const [loading, setLoading] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
 
+  // Global period — initialized from localStorage, updated when company changes
+  const today = new Date().toISOString().slice(0, 10);
+  const [periodFrom, setPeriodFrom] = useState<string>(
+    () => localStorage.getItem('global_period_from') || today
+  );
+  const [periodTo, setPeriodTo] = useState<string>(
+    () => localStorage.getItem('global_period_to') || today
+  );
+  const [currentDate, setCurrentDateState] = useState<string>(
+    () => localStorage.getItem('global_current_date') || today
+  );
+
+  /** Clamp a date string to [from, to] */
+  const clampDate = (date: string, from: string, to: string) =>
+    date < from ? from : date > to ? to : date;
+
+  const setPeriod = (from: string, to: string) => {
+    setPeriodFrom(from);
+    setPeriodTo(to);
+    localStorage.setItem('global_period_from', from);
+    localStorage.setItem('global_period_to', to);
+    // Keep currentDate inside the new period
+    const clamped = clampDate(currentDate, from, to);
+    if (clamped !== currentDate) {
+      setCurrentDateState(clamped);
+      localStorage.setItem('global_current_date', clamped);
+    }
+  };
+
+  const setCurrentDate = (date: string) => {
+    const clamped = clampDate(date, periodFrom, periodTo);
+    setCurrentDateState(clamped);
+    localStorage.setItem('global_current_date', clamped);
+  };
+
   const fetchCompanies = async () => {
     if (!user) return;
     
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/companies/${user.id}`);
+      const licenseId = user.license_id || '';
+      const url = licenseId
+        ? `${API_BASE_URL}/companies/${user.id}?licenseId=${licenseId}`
+        : `${API_BASE_URL}/companies/${user.id}`;
+      const response = await fetch(url);
       const result = await response.json();
 
       if (result && result.success) {
@@ -112,14 +192,15 @@ export const CompanyProvider = ({ children }: CompanyProviderProps) => {
       console.debug('Creating company via backend API:', companyData);
       
       // Call backend API to create company
-      const response = await fetch('http://localhost:5000/api/companies', {
+      const response = await fetch(`${API_BASE_URL}/companies`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           companyData,
-          userId: user.id
+          userId: user.id,
+          licenseId: user.license_id || null,
         })
       });
 
@@ -181,7 +262,7 @@ export const CompanyProvider = ({ children }: CompanyProviderProps) => {
       console.log('Attempting login to company:', selectedCompany.id, 'with username:', username);
       
       // Call backend API to login
-      const response = await fetch(`http://localhost:5000/api/companies/${selectedCompany.id}/login`, {
+      const response = await fetch(`${API_BASE_URL}/companies/${selectedCompany.id}/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -237,7 +318,7 @@ export const CompanyProvider = ({ children }: CompanyProviderProps) => {
     if (currentSession) {
       // Delete session from backend
       try {
-        const response = await fetch('http://localhost:5000/api/companies/session/logout', {
+        const response = await fetch(`${API_BASE_URL}/companies/session/logout`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -279,6 +360,24 @@ export const CompanyProvider = ({ children }: CompanyProviderProps) => {
     }
   }, [user]);
 
+  // Re-compute period & current date when the selected company (or its last_voucher_date) changes
+  useEffect(() => {
+    if (selectedCompany) {
+      const lastDate = selectedCompany.last_voucher_date || new Date().toISOString().slice(0, 10);
+      const refDate = new Date(lastDate + 'T00:00:00');
+      const fy = computeFinancialYear(selectedCompany.country, refDate);
+      setPeriodFrom(fy.from);
+      setPeriodTo(fy.to);
+      localStorage.setItem('global_period_from', fy.from);
+      localStorage.setItem('global_period_to', fy.to);
+      // Default currentDate to last_voucher_date, clamped to FY
+      const cd = clampDate(lastDate, fy.from, fy.to);
+      setCurrentDateState(cd);
+      localStorage.setItem('global_current_date', cd);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCompany?.id, selectedCompany?.last_voucher_date]);
+
   // Check for existing company session on load
   useEffect(() => {
     const checkExistingSession = async () => {
@@ -308,7 +407,7 @@ export const CompanyProvider = ({ children }: CompanyProviderProps) => {
         }
         
         // Validate session with backend
-        const response = await fetch('http://localhost:5000/api/companies/session/validate', {
+        const response = await fetch(`${API_BASE_URL}/companies/session/validate`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -357,6 +456,11 @@ export const CompanyProvider = ({ children }: CompanyProviderProps) => {
         currentSession,
         loading,
         isRestoringSession,
+        periodFrom,
+        periodTo,
+        setPeriod,
+        currentDate,
+        setCurrentDate,
         selectCompany,
         updateSelectedCompany,
         loginToCompany,

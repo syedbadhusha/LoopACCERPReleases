@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ArrowLeft, Printer } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 import { format } from 'date-fns';
+import { API_BASE_URL } from '@/config/runtime';
 
 interface StockItem {
   item_id: string;
@@ -102,17 +103,23 @@ const valueColumnStyle = { minWidth: '140px', whiteSpace: 'nowrap' as const };
 
 const StockSummaryReport = () => {
   const navigate = useNavigate();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
   const [stockData, setStockData] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dateFrom, setDateFrom] = useState(format(new Date(new Date().getFullYear(), 3, 1), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [dateFrom, setDateFrom] = useState(periodFrom);
+  const [dateTo, setDateTo] = useState(periodTo);
+
+  // Sync with global period when it changes
+  useEffect(() => { setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { setDateTo(periodTo); }, [periodTo]);
   const [selectedItemId, setSelectedItemId] = useState('all');
   const [selectedStockGroupId, setSelectedStockGroupId] = useState('all');
   const [selectedStockCategoryId, setSelectedStockCategoryId] = useState('all');
   const [itemOptions, setItemOptions] = useState<FilterOption[]>([]);
   const [stockGroupOptions, setStockGroupOptions] = useState<FilterOption[]>([]);
   const [stockCategoryOptions, setStockCategoryOptions] = useState<FilterOption[]>([]);
+  const [printPreviewHtml, setPrintPreviewHtml] = useState<string | null>(null);
+  const printIframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     if (selectedCompany) {
@@ -134,8 +141,8 @@ const StockSummaryReport = () => {
       });
 
       const [itemResp, voucherResp] = await Promise.all([
-        fetch(`http://localhost:5000/api/items?${params}`),
-        fetch(`http://localhost:5000/api/vouchers?${params}`),
+        fetch(`${API_BASE_URL}/items?${params}`),
+        fetch(`${API_BASE_URL}/vouchers?${params}`),
       ]);
 
       if (!itemResp.ok) throw new Error('Failed to fetch items');
@@ -282,13 +289,20 @@ const StockSummaryReport = () => {
       const stockSummary: StockItem[] = items.map((item: any) => {
         const itemId = String(item?.id || '');
         const opening = openingState.get(itemId) || { qty: 0, value: 0 };
-        const closing = closingState.get(itemId) || { qty: 0, value: 0 };
         const movement = periodMovement.get(itemId) || {
           purchases: 0,
           purchase_value: 0,
           sales: 0,
           sales_value: 0,
         };
+
+        // Calculate closing as opening + purchases - sales
+        const closing_stock = opening.qty + movement.purchases - movement.sales;
+        let closing_value = opening.value + movement.purchase_value - movement.sales_value;
+        // If closing_stock is 0, set value and rate to 0
+        if (Math.abs(closing_stock) < 0.000001) {
+          closing_value = 0;
+        }
 
         return {
           item_id: itemId,
@@ -304,8 +318,8 @@ const StockSummaryReport = () => {
           purchase_value: movement.purchase_value,
           sales: movement.sales,
           sales_value: movement.sales_value,
-          closing_stock: closing.qty,
-          closing_value: closing.value,
+          closing_stock,
+          closing_value,
         };
       }).filter((item) => {
         const totalMovement =
@@ -339,8 +353,7 @@ const StockSummaryReport = () => {
   }, [stockData, selectedItemId, selectedStockGroupId, selectedStockCategoryId]);
 
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+    let invoiceHtml = '';
 
     const totalOpeningValue = filteredStockData.reduce((sum, item) => sum + item.opening_value, 0);
     const totalOpeningQty = filteredStockData.reduce((sum, item) => sum + item.opening_stock, 0);
@@ -351,7 +364,7 @@ const StockSummaryReport = () => {
     const totalClosingValue = filteredStockData.reduce((sum, item) => sum + item.closing_value, 0);
     const totalClosingQty = filteredStockData.reduce((sum, item) => sum + item.closing_stock, 0);
 
-    printWindow.document.write(`
+    invoiceHtml = `
       <html>
         <head>
           <title>Stock Summary</title>
@@ -437,9 +450,8 @@ const StockSummaryReport = () => {
           </table>
         </body>
       </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
+    `;
+    setPrintPreviewHtml(invoiceHtml);
   };
 
   if (!selectedCompany) {
@@ -656,6 +668,39 @@ const StockSummaryReport = () => {
         </Card>
         </div>
       </div>
+
+      {/* ── Print Preview Modal ── */}
+      {printPreviewHtml && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setPrintPreviewHtml(null); }}
+        >
+          <div className="flex items-center justify-between bg-white px-4 py-2 border-b shadow-sm">
+            <span className="font-semibold text-sm">Print Preview</span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const ifw = printIframeRef.current?.contentWindow;
+                  if (ifw) { ifw.focus(); ifw.print(); }
+                }}
+              >
+                <Printer className="h-4 w-4 mr-1" />
+                Print
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setPrintPreviewHtml(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+          <iframe
+            ref={printIframeRef}
+            srcDoc={printPreviewHtml}
+            className="flex-1 w-full bg-white"
+            title="Print Preview"
+          />
+        </div>
+      )}
     </div>
   );
 };

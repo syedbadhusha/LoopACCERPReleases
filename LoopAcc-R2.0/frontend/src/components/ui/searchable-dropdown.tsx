@@ -12,6 +12,7 @@ interface SearchableDropdownProps {
   options: SearchableOption[];
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
 }
 
 const SearchableDropdown = ({
@@ -20,6 +21,7 @@ const SearchableDropdown = ({
   options,
   placeholder = 'Type or select',
   className,
+  disabled = false,
 }: SearchableDropdownProps) => {
   const listId = useId();
   const [inputValue, setInputValue] = useState('');
@@ -78,6 +80,7 @@ const SearchableDropdown = ({
         value={inputValue}
         onChange={(e) => handleChange(e.target.value)}
         onBlur={handleBlur}
+        disabled={disabled}
       />
       <datalist id={listId}>
         {options.map((option) => (

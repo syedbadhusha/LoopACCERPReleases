@@ -66,7 +66,7 @@ const BillAllocationDialog = ({
 
       // Read from bills collection and derive allocation rows from opening/closing.
       const billsRes = await fetch(
-        `http://localhost:5000/api/bills?companyId=${selectedCompany.id}`
+        `${API_BASE_URL}/bills?companyId=${selectedCompany.id}`
       );
       const billsJson = await billsRes.json();
       const allBills = billsJson.success ? billsJson.data || [] : [];

@@ -4,19 +4,22 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { API_BASE_URL } from '@/config/runtime';
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Plus, Edit, Trash2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Plus, Edit, Trash2, Upload, X, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 import { getCompanyTaxType, isCompanyTaxEnabled, isCompanyBatchesEnabled, isCompanyPOSEnabled } from '@/lib/companyTax';
+import { usePermissions } from '@/contexts/PermissionContext';
 
 const normalizeBatchNumber = (value: unknown): string =>
   String(value || '')
@@ -30,6 +33,7 @@ const ItemMaster = () => {
   const returnTo = location.state?.returnTo;
   const { toast } = useToast();
   const { selectedCompany } = useCompany();
+  const { can } = usePermissions();
   const isTaxEnabled = isCompanyTaxEnabled(selectedCompany);
   const companyTaxType = getCompanyTaxType(selectedCompany);
   const companyBatchesEnabled = isCompanyBatchesEnabled(selectedCompany);
@@ -62,7 +66,7 @@ const ItemMaster = () => {
     if (!quickUom.name.trim() || !selectedCompany) return;
     setUomSubmitting(true);
     try {
-      const resp = await fetch('http://localhost:5000/api/uom', {
+      const resp = await fetch(`${API_BASE_URL}/uom`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: quickUom.name.trim(), symbol: quickUom.symbol.trim() || quickUom.name.trim(), decimal_places: quickUom.decimal_places, company_id: selectedCompany.id }),
@@ -83,7 +87,7 @@ const ItemMaster = () => {
     if (!quickStockGroup.name.trim() || !selectedCompany) return;
     setStockGroupSubmitting(true);
     try {
-      const resp = await fetch('http://localhost:5000/api/stock-groups', {
+      const resp = await fetch(`${API_BASE_URL}/stock-groups`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: quickStockGroup.name.trim(), alias: quickStockGroup.alias.trim() || null, parent_group_id: quickStockGroup.parent_group_id || null, company_id: selectedCompany.id }),
@@ -104,7 +108,7 @@ const ItemMaster = () => {
     if (!quickStockCat.name.trim() || !selectedCompany) return;
     setStockCatSubmitting(true);
     try {
-      const resp = await fetch('http://localhost:5000/api/stock-categories', {
+      const resp = await fetch(`${API_BASE_URL}/stock-categories`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: quickStockCat.name.trim(), alias: quickStockCat.alias.trim() || null, company_id: selectedCompany.id }),
@@ -161,10 +165,10 @@ const ItemMaster = () => {
     if (!selectedCompany) return;
     try {
       const [itemsRes, uomsRes, groupsRes, categoriesRes] = await Promise.all([
-        fetch(`http://localhost:5000/api/items?companyId=${selectedCompany.id}`).then(r => r.json()),
-        fetch(`http://localhost:5000/api/uom?companyId=${selectedCompany.id}`).then(r => r.json()),
-        fetch(`http://localhost:5000/api/stock-groups?companyId=${selectedCompany.id}`).then(r => r.json()),
-        fetch(`http://localhost:5000/api/stock-categories?companyId=${selectedCompany.id}`).then(r => r.json())
+        fetch(`${API_BASE_URL}/items?companyId=${selectedCompany.id}`).then(r => r.json()),
+        fetch(`${API_BASE_URL}/uom?companyId=${selectedCompany.id}`).then(r => r.json()),
+        fetch(`${API_BASE_URL}/stock-groups?companyId=${selectedCompany.id}`).then(r => r.json()),
+        fetch(`${API_BASE_URL}/stock-categories?companyId=${selectedCompany.id}`).then(r => r.json())
       ]);
 
       if (itemsRes && itemsRes.success) {
@@ -232,12 +236,44 @@ const ItemMaster = () => {
     setShowForm(false);
   };
 
+  const [viewOnly, setViewOnly] = useState(false);
   const handleEdit = (item: any) => {
     // Determine mode based on batch_details
     const batchDetails = item.batch_details || [];
     const hasPrimaryBatch = batchDetails.length === 1 && batchDetails[0].batch_number === 'primary';
     const mode = hasPrimaryBatch ? 'without_batch' : (batchDetails.length > 0 ? 'with_batch' : 'without_batch');
-    
+    setViewOnly(false);
+    setFormData({
+      uom_id: item.uom_id,
+      stock_group_id: item.stock_group_id || '',
+      stock_category_id: item.stock_category_id || '',
+      name: item.name,
+      alias: item.alias || '',
+      hsn_code: item.hsn_code || '',
+      opening_stock: item.opening_stock || 0,
+      opening_rate: item.opening_rate || 0,
+      opening_value: item.opening_value || 0,
+      standard_rates: item.standard_rates || [],
+      tax_rate: item.tax_rate || 0,
+      igst_rate: item.igst_rate || 0,
+      cgst_rate: item.cgst_rate || 0,
+      sgst_rate: item.sgst_rate || 0,
+      tax_effective_date: new Date().toISOString().split('T')[0],
+      enable_batches: item.enable_batches || false,
+      batch_details: item.batch_details || [],
+      opening_balance_mode: mode,
+      tax_history: item.tax_history || [],
+      image: item.image || '',
+    });
+    setEditingItem(item);
+    setShowForm(true);
+  };
+
+  const handleView = (item: any) => {
+    const batchDetails = item.batch_details || [];
+    const hasPrimaryBatch = batchDetails.length === 1 && batchDetails[0].batch_number === 'primary';
+    const mode = hasPrimaryBatch ? 'without_batch' : (batchDetails.length > 0 ? 'with_batch' : 'without_batch');
+    setViewOnly(true);
     setFormData({
       uom_id: item.uom_id,
       stock_group_id: item.stock_group_id || '',
@@ -454,7 +490,7 @@ const ItemMaster = () => {
       }
 
       if (editingItem) {
-        const resp = await fetch(`http://localhost:5000/api/items/${editingItem.id}`, {
+        const resp = await fetch(`${API_BASE_URL}/items/${editingItem.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(dataToSave)
@@ -472,7 +508,7 @@ const ItemMaster = () => {
         
         toast({ title: "Success", description: "Item updated successfully!" });
       } else {
-        const resp = await fetch(`http://localhost:5000/api/items`, {
+        const resp = await fetch(`${API_BASE_URL}/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(dataToSave)
@@ -585,7 +621,7 @@ const ItemMaster = () => {
     if (!confirm('Are you sure you want to delete this item?')) return;
 
     try {
-      const resp = await fetch(`http://localhost:5000/api/items/${id}`, { method: 'DELETE' });
+      const resp = await fetch(`${API_BASE_URL}/items/${id}`, { method: 'DELETE' });
       let json: any = null;
       try {
         json = await resp.json();
@@ -636,136 +672,161 @@ const ItemMaster = () => {
               <p className="text-sm text-muted-foreground">{selectedCompany.name}</p>
             </div>
           </div>
-          <Button onClick={() => setShowForm(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Item
-          </Button>
+          {can && can('master_item_create') && (
+            <Button onClick={() => setShowForm(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Item
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-6">
 
         <Dialog open={showForm} onOpenChange={(open) => { if (!open) resetForm(); }}>
-          <DialogContent className="max-w-4xl overflow-y-auto max-h-[90vh]">
+          <DialogContent aria-description="undefined" className="max-w-4xl overflow-y-auto max-h-[90vh]" aria-describedby="item-form-desc">
             <DialogHeader>
               <DialogTitle>{editingItem ? 'Edit Item' : 'Add New Item'}</DialogTitle>
+              <DialogDescription>Fill all required item details and save.</DialogDescription>
+              <span id="item-form-desc" className="sr-only">Fill all required item details and save.</span>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  
+                  {/* Unit of Measure */}
                   <div>
                     <Label>Unit of Measure</Label>
                     <div className="flex gap-2">
                       <SearchableDropdown
                         value={formData.uom_id}
-                        onValueChange={(value) => setFormData({ ...formData, uom_id: value })}
+                        onValueChange={viewOnly ? undefined : (value) => setFormData({ ...formData, uom_id: value })}
                         placeholder="Select UOM"
                         options={uoms.map((uom) => ({
                           value: uom.id,
                           label: `${uom.name} (${uom.symbol})`,
                         }))}
+                        disabled={viewOnly}
                       />
-                       <Button type="button" variant="outline" size="icon" onClick={() => setUomDialogOpen(true)} title="Create new UOM">
-                         <Plus className="h-4 w-4" />
-                       </Button>
+                      {!viewOnly && (
+                        <Button type="button" variant="outline" size="icon" onClick={() => setUomDialogOpen(true)} title="Create new UOM">
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
 
+                  {/* Stock Group */}
                   <div>
                     <Label>Stock Group</Label>
                     <div className="flex gap-2">
                       <SearchableDropdown
                         value={formData.stock_group_id}
-                        onValueChange={(value) => setFormData({ ...formData, stock_group_id: value })}
+                        onValueChange={viewOnly ? undefined : (value) => setFormData({ ...formData, stock_group_id: value })}
                         placeholder="Select Stock Group"
                         options={stockGroups.map((group) => ({ value: group.id, label: group.name }))}
+                        disabled={viewOnly}
                       />
-                      <Button type="button" variant="outline" size="icon" onClick={() => setStockGroupDialogOpen(true)} title="Create new stock group">
-                        <Plus className="h-4 w-4" />
-                      </Button>
+                      {!viewOnly && (
+                        <Button type="button" variant="outline" size="icon" onClick={() => setStockGroupDialogOpen(true)} title="Create new stock group">
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
 
+                  {/* Stock Category */}
                   <div>
                     <Label>Stock Category</Label>
                     <div className="flex gap-2">
                       <SearchableDropdown
                         value={formData.stock_category_id}
-                        onValueChange={(value) => setFormData({ ...formData, stock_category_id: value })}
+                        onValueChange={viewOnly ? undefined : (value) => setFormData({ ...formData, stock_category_id: value })}
                         placeholder="Select Stock Category"
                         options={stockCategories.map((category) => ({ value: category.id, label: category.name }))}
+                        disabled={viewOnly}
                       />
-                      <Button type="button" variant="outline" size="icon" onClick={() => setStockCatDialogOpen(true)} title="Create new stock category">
-                        <Plus className="h-4 w-4" />
-                      </Button>
+                      {!viewOnly && (
+                        <Button type="button" variant="outline" size="icon" onClick={() => setStockCatDialogOpen(true)} title="Create new stock category">
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
-                  
+
+                  {/* Item Name */}
                   <div>
                     <Label>Item Name</Label>
-                    <Input 
+                    <Input
                       value={formData.name}
-                      onChange={(e) => setFormData({...formData, name: e.target.value})}
+                      onChange={viewOnly ? undefined : (e) => setFormData({ ...formData, name: e.target.value })}
                       placeholder="Enter item name"
                       required
+                      readOnly={viewOnly}
                     />
                   </div>
-                  
+
+                  {/* Alias */}
                   <div>
                     <Label>Alias</Label>
-                    <Input 
+                    <Input
                       value={formData.alias}
-                      onChange={(e) => setFormData({...formData, alias: e.target.value})}
+                      onChange={viewOnly ? undefined : (e) => setFormData({ ...formData, alias: e.target.value })}
                       placeholder="Enter alias"
+                      readOnly={viewOnly}
                     />
                   </div>
 
                   {/* Item Image for POS */}
-                  {companyPOSEnabled && <div className="md:col-span-2">
-                    <Label>Item Image <span className="text-muted-foreground text-xs">(for POS display)</span></Label>
-                    <div className="flex items-start gap-4 mt-1">
-                      {formData.image ? (
-                        <div className="relative">
-                          <img src={formData.image} alt="item" className="h-20 w-20 object-cover rounded border" />
-                          <button
-                            type="button"
-                            onClick={() => setFormData(p => ({ ...p, image: '' }))}
-                            className="absolute -top-2 -right-2 bg-destructive text-white rounded-full w-5 h-5 flex items-center justify-center"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
+                  {companyPOSEnabled && (
+                    <div className="md:col-span-2">
+                      <Label>Item Image <span className="text-muted-foreground text-xs">(for POS display)</span></Label>
+                      <div className="flex items-start gap-4 mt-1">
+                        {formData.image ? (
+                          <div className="relative">
+                            <img src={formData.image} alt="item" className="h-20 w-20 object-cover rounded border" />
+                            {!viewOnly && (
+                              <button
+                                type="button"
+                                onClick={() => setFormData(p => ({ ...p, image: '' }))}
+                                className="absolute -top-2 -right-2 bg-destructive text-white rounded-full w-5 h-5 flex items-center justify-center"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="h-20 w-20 border-2 border-dashed rounded flex items-center justify-center text-muted-foreground">
+                            <Upload className="h-6 w-6" />
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            className="cursor-pointer"
+                            onChange={viewOnly ? undefined : (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const reader = new FileReader();
+                              reader.onload = (ev) => setFormData(p => ({ ...p, image: ev.target?.result as string }));
+                              reader.readAsDataURL(file);
+                            }}
+                            disabled={viewOnly}
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">Upload JPG, PNG or GIF. Shown as thumbnail in POS screen.</p>
                         </div>
-                      ) : (
-                        <div className="h-20 w-20 border-2 border-dashed rounded flex items-center justify-center text-muted-foreground">
-                          <Upload className="h-6 w-6" />
-                        </div>
-                      )}
-                      <div className="flex-1">
-                        <Input
-                          type="file"
-                          accept="image/*"
-                          className="cursor-pointer"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            const reader = new FileReader();
-                            reader.onload = (ev) => setFormData(p => ({ ...p, image: ev.target?.result as string }));
-                            reader.readAsDataURL(file);
-                          }}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">Upload JPG, PNG or GIF. Shown as thumbnail in POS screen.</p>
                       </div>
                     </div>
-                  </div>}
-                  
+                  )}
+
                   {/* HSN Code - Only show when tax is enabled */}
                   {isTaxEnabled && (
                     <div>
                       <Label>HSN Code</Label>
-                      <Input 
+                      <Input
                         value={formData.hsn_code}
-                        onChange={(e) => setFormData({...formData, hsn_code: e.target.value})}
+                        onChange={viewOnly ? undefined : (e) => setFormData({ ...formData, hsn_code: e.target.value })}
                         placeholder="Enter HSN code"
+                        readOnly={viewOnly}
                       />
                     </div>
                   )}
@@ -846,17 +907,21 @@ const ItemMaster = () => {
                         <Input 
                           type="date"
                           value={formData.tax_effective_date}
-                          onChange={(e) => setFormData({...formData, tax_effective_date: e.target.value})}
+                          onChange={viewOnly ? undefined : (e) => setFormData({...formData, tax_effective_date: e.target.value})}
                           className="flex-1"
+                          readOnly={viewOnly}
+                          disabled={viewOnly}
                         />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={addTaxToHistory}
-                          className="whitespace-nowrap"
-                        >
-                          Add to History
-                        </Button>
+                        {!viewOnly && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={addTaxToHistory}
+                            className="whitespace-nowrap"
+                          >
+                            Add to History
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="outline"
@@ -868,6 +933,7 @@ const ItemMaster = () => {
                             });
                           }}
                           className="whitespace-nowrap"
+                          disabled={viewOnly}
                         >
                           View History ({buildMergedTaxHistory().length})
                         </Button>
@@ -885,10 +951,11 @@ const ItemMaster = () => {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
+                    onClick={viewOnly ? undefined : () => {
                       setStandardRateEntry({ date: new Date().toISOString().split('T')[0], cost: 0, rate: 0 });
                       setStandardRatesDialogOpen(true);
                     }}
+                    disabled={viewOnly}
                   >
                     <Plus className="h-3.5 w-3.5 mr-1" />
                     Add Standard Rate
@@ -909,10 +976,10 @@ const ItemMaster = () => {
                         type="checkbox"
                         id="mode_with_batch"
                         checked={formData.opening_balance_mode === 'with_batch'}
-                        onChange={async (e) => {
+                        onChange={viewOnly ? undefined : async (e) => {
                           const newVal = e.target.checked;
                           if (!newVal && editingItem?.id && selectedCompany) {
-                            const resp = await fetch(`http://localhost:5000/api/batch-allocations?itemId=${editingItem.id}&companyId=${selectedCompany.id}`);
+                            const resp = await fetch(`${API_BASE_URL}/batch-allocations?itemId=${editingItem.id}&companyId=${selectedCompany.id}`);
                             const json = await resp.json();
                             if (json.data && json.data.length > 0) {
                               toast({ title: 'Cannot disable', description: `This item has ${json.data.length} existing batch record(s). Delete them before disabling batch tracking.`, variant: 'destructive' });
@@ -922,6 +989,7 @@ const ItemMaster = () => {
                           setFormData({...formData, opening_balance_mode: newVal ? 'with_batch' : 'without_batch'});
                         }}
                         className="w-4 h-4 rounded border-gray-300"
+                        disabled={viewOnly}
                       />
                       <Label htmlFor="mode_with_batch" className="cursor-pointer">With Batch</Label>
                     </div>
@@ -934,10 +1002,12 @@ const ItemMaster = () => {
                       <Input 
                         type="number"
                         value={formData.opening_stock}
-                        onChange={(e) => setFormData({...formData, opening_stock: parseFloat(e.target.value) || 0})}
+                        onChange={viewOnly ? undefined : (e) => setFormData({...formData, opening_stock: parseFloat(e.target.value) || 0})}
                         step="0.01"
                         min="0"
                         placeholder="Opening stock quantity"
+                        readOnly={viewOnly}
+                        disabled={viewOnly}
                       />
                     </div>                  
                     <div>
@@ -945,10 +1015,12 @@ const ItemMaster = () => {
                       <Input 
                         type="number"
                         value={formData.opening_rate}
-                        onChange={(e) => setFormData({...formData, opening_rate: parseFloat(e.target.value) || 0})}
+                        onChange={viewOnly ? undefined : (e) => setFormData({...formData, opening_rate: parseFloat(e.target.value) || 0})}
                         step="0.01"
                         min="0"
                         placeholder="Rate per unit"
+                        readOnly={viewOnly}
+                        disabled={viewOnly}
                       />
                     </div>
                     
@@ -974,7 +1046,8 @@ const ItemMaster = () => {
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={addBatchRow}
+                            onClick={viewOnly ? undefined : addBatchRow}
+                            disabled={viewOnly}
                           >
                             <Plus className="h-4 w-4 mr-1" />
                             Add Batch
@@ -997,9 +1070,11 @@ const ItemMaster = () => {
                                   <Label className="text-xs">Batch Number</Label>
                                   <Input
                                     value={batch.batch_number}
-                                    onChange={(e) => updateBatchRow(batch.id, 'batch_number', e.target.value)}
+                                    onChange={viewOnly ? undefined : (e) => updateBatchRow(batch.id, 'batch_number', e.target.value)}
                                     placeholder="Batch #"
                                     className={hasDuplicateBatch ? 'border-red-500' : ''}
+                                    readOnly={viewOnly}
+                                    disabled={viewOnly}
                                   />
                                   {hasDuplicateBatch && (
                                     <p className="text-xs text-red-500 mt-1">Batch number must be unique for this item</p>
@@ -1010,9 +1085,11 @@ const ItemMaster = () => {
                                   <Input
                                     type="number"
                                     value={batch.opening_qty}
-                                    onChange={(e) => updateBatchRow(batch.id, 'opening_qty', parseFloat(e.target.value) || 0)}
+                                    onChange={viewOnly ? undefined : (e) => updateBatchRow(batch.id, 'opening_qty', parseFloat(e.target.value) || 0)}
                                     step="0.01"
                                     min="0"
+                                    readOnly={viewOnly}
+                                    disabled={viewOnly}
                                   />
                                 </div>
                                 <div>
@@ -1020,9 +1097,11 @@ const ItemMaster = () => {
                                   <Input
                                     type="number"
                                     value={batch.opening_rate}
-                                    onChange={(e) => updateBatchRow(batch.id, 'opening_rate', parseFloat(e.target.value) || 0)}
+                                    onChange={viewOnly ? undefined : (e) => updateBatchRow(batch.id, 'opening_rate', parseFloat(e.target.value) || 0)}
                                     step="0.01"
                                     min="0"
+                                    readOnly={viewOnly}
+                                    disabled={viewOnly}
                                   />
                                 </div>
                                 <div>
@@ -1038,7 +1117,8 @@ const ItemMaster = () => {
                                   type="button"
                                   variant="destructive"
                                   size="sm"
-                                  onClick={() => removeBatchRow(batch.id)}
+                                  onClick={viewOnly ? undefined : () => removeBatchRow(batch.id)}
+                                  disabled={viewOnly}
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
@@ -1066,7 +1146,7 @@ const ItemMaster = () => {
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={loading}>
+                  <Button type="submit" disabled={viewOnly || loading} style={viewOnly ? { display: 'none' } : {}}>
                     {loading ? 'Saving...' : (editingItem ? 'Update' : 'Save')}
                   </Button>
                 </DialogFooter>
@@ -1117,12 +1197,21 @@ const ItemMaster = () => {
                       </TableCell>
                       <TableCell>
                         <div className="flex space-x-2">
-                          <Button variant="outline" size="sm" onClick={() => handleEdit(item)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(item.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {can && can('master_item_view') && (
+                            <Button variant="outline" size="sm" onClick={() => handleView(item)} title="View">
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {can && can('master_item_edit') && !viewOnly && (
+                            <Button variant="outline" size="sm" onClick={() => handleEdit(item)} title="Edit">
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {can && can('master_item_delete') && !viewOnly && (
+                            <Button variant="outline" size="sm" onClick={() => handleDelete(item.id)} title="Delete">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1145,9 +1234,10 @@ const ItemMaster = () => {
           }
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" aria-describedby="tax-history-desc">
           <DialogHeader>
             <DialogTitle>Tax History - {selectedItemForHistory?.name}</DialogTitle>
+            <span id="tax-history-desc" className="sr-only">Shows the tax rate history for this item.</span>
           </DialogHeader>
           {selectedItemForHistory?.tax_history && selectedItemForHistory.tax_history.length > 0 ? (
             <div className="space-y-4">
@@ -1207,8 +1297,8 @@ const ItemMaster = () => {
       </Dialog>
       {/* Quick Create UOM Dialog */}
       <Dialog open={uomDialogOpen} onOpenChange={(o) => { if (!o) { setUomDialogOpen(false); setQuickUom({ name: '', symbol: '', decimal_places: 2 }); } }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Create New UOM</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-sm" aria-describedby="uom-dialog-desc">
+          <DialogHeader><DialogTitle>Create New UOM</DialogTitle><span id="uom-dialog-desc" className="sr-only">Create a new unit of measure for items.</span></DialogHeader>
           <div className="space-y-4 py-2">
             <div><Label>UOM Name *</Label><Input value={quickUom.name} onChange={(e) => setQuickUom(p => ({ ...p, name: e.target.value }))} placeholder="e.g., Kilogram" autoFocus /></div>
             <div><Label>Symbol</Label><Input value={quickUom.symbol} onChange={(e) => setQuickUom(p => ({ ...p, symbol: e.target.value }))} placeholder="e.g., kg" /></div>
@@ -1223,8 +1313,8 @@ const ItemMaster = () => {
 
       {/* Quick Create Stock Group Dialog */}
       <Dialog open={stockGroupDialogOpen} onOpenChange={(o) => { if (!o) { setStockGroupDialogOpen(false); setQuickStockGroup({ name: '', alias: '', parent_group_id: '' }); } }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Create New Stock Group</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-sm" aria-describedby="stock-group-dialog-desc">
+          <DialogHeader><DialogTitle>Create New Stock Group</DialogTitle><span id="stock-group-dialog-desc" className="sr-only">Create a new stock group for items.</span></DialogHeader>
           <div className="space-y-4 py-2">
             <div><Label>Stock Group Name *</Label><Input value={quickStockGroup.name} onChange={(e) => setQuickStockGroup(p => ({ ...p, name: e.target.value }))} placeholder="Enter stock group name" autoFocus /></div>
             <div><Label>Alias</Label><Input value={quickStockGroup.alias} onChange={(e) => setQuickStockGroup(p => ({ ...p, alias: e.target.value }))} placeholder="Enter alias (optional)" /></div>
@@ -1247,8 +1337,8 @@ const ItemMaster = () => {
 
       {/* Quick Create Stock Category Dialog */}
       <Dialog open={stockCatDialogOpen} onOpenChange={(o) => { if (!o) { setStockCatDialogOpen(false); setQuickStockCat({ name: '', alias: '' }); } }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Create New Stock Category</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-sm" aria-describedby="stock-cat-dialog-desc">
+          <DialogHeader><DialogTitle>Create New Stock Category</DialogTitle><span id="stock-cat-dialog-desc" className="sr-only">Create a new stock category for items.</span></DialogHeader>
           <div className="space-y-4 py-2">
             <div><Label>Stock Category Name *</Label><Input value={quickStockCat.name} onChange={(e) => setQuickStockCat(p => ({ ...p, name: e.target.value }))} placeholder="Enter stock category name" autoFocus /></div>
             <div><Label>Alias</Label><Input value={quickStockCat.alias} onChange={(e) => setQuickStockCat(p => ({ ...p, alias: e.target.value }))} placeholder="Enter alias (optional)" /></div>
@@ -1262,8 +1352,8 @@ const ItemMaster = () => {
 
       {/* Add Standard Rate Dialog */}
       <Dialog open={standardRatesDialogOpen} onOpenChange={(o) => { if (!o) setStandardRatesDialogOpen(false); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Standard Rates</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-lg" aria-describedby="standard-rate-dialog-desc">
+          <DialogHeader><DialogTitle>Standard Rates</DialogTitle><span id="standard-rate-dialog-desc" className="sr-only">Manage standard purchase and sales rates for this item.</span></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="grid grid-cols-3 gap-3">
               <div>

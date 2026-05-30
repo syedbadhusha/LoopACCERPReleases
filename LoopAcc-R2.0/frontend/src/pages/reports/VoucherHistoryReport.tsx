@@ -1,4 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { VoucherViewModal } from '@/components/VoucherViewModal';
+import InventoryVchViewForm from '../forms/InventoryVchViewForm';
+import AccountingVchViewForm from '../forms/AccountingVchViewForm';
+import POSViewForm from '../pos/POSViewForm';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,11 +10,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Edit, Printer, Trash2 } from 'lucide-react';
+import { ArrowLeft, Edit, Eye, Printer, Trash2 } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/contexts/PermissionContext';
 import { format } from 'date-fns';
-
+import { API_BASE_URL } from '@/config/runtime';
+import { Item } from '@radix-ui/react-select';
 interface VoucherEntry {
   id: string;
   voucher_number: string;
@@ -33,8 +39,9 @@ interface VoucherTypeOption {
 }
 const VoucherHistoryReport = () => {
   const navigate = useNavigate();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, periodFrom, periodTo, currentDate } = useCompany();
   const { toast } = useToast();
+  const { canVoucher } = usePermissions();
   const [voucherData, setVoucherData] = useState<VoucherEntry[]>([]);
   const [voucherTypes, setVoucherTypes] = useState<VoucherTypeOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,25 +52,27 @@ const VoucherHistoryReport = () => {
                    'Tax Amount';
 
   const CREDIT_TYPES = new Set(['purchase', 'credit-note', 'payment']);
-  // Load filter state from localStorage
-  const [dateFrom, setDateFrom] = useState(() => {
-    const saved = localStorage.getItem('voucherHistory_dateFrom');
-    return saved || format(new Date(), 'yyyy-MM-dd');
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    const saved = localStorage.getItem('voucherHistory_dateTo');
-    return saved || format(new Date(), 'yyyy-MM-dd');
-  });
-  const [voucherType, setVoucherType] = useState(() => {
-    const saved = localStorage.getItem('voucherHistory_voucherType');
-    return saved || 'all';
-  });
+  // Default to currentDate (single day view); user can widen to full period
+  const [dateFrom, setDateFrom] = useState(currentDate);
+  const [dateTo, setDateTo] = useState(currentDate);
+
+  // Sync with currentDate when it changes (but don't force-reset if user has already changed)
+  const [userChangedDates, setUserChangedDates] = useState(false);
+  useEffect(() => {
+    if (!userChangedDates) {
+      setDateFrom(currentDate);
+      setDateTo(currentDate);
+    }
+  }, [currentDate]);
+  const [voucherType, setVoucherType] = useState('all');
+  const [printPreviewHtml, setPrintPreviewHtml] = useState<string | null>(null);
+  const printIframeRef = useRef<HTMLIFrameElement>(null);
   const currencySymbol = selectedCompany?.currency === 'INR' ? '₹' : selectedCompany?.currency === 'USD' ? '$' : selectedCompany?.currency || '₹';
 
   // Fetch voucher type master list for filter dropdown
   useEffect(() => {
     if (!selectedCompany) return;
-    fetch(`http://localhost:5000/api/voucher-types?companyId=${selectedCompany.id}`)
+    fetch(`${API_BASE_URL}/voucher-types?companyId=${selectedCompany.id}`)
       .then(r => r.json())
       .then(json => setVoucherTypes(json.data || []))
       .catch(() => setVoucherTypes([]));
@@ -72,8 +81,7 @@ const VoucherHistoryReport = () => {
   useEffect(() => {
     localStorage.setItem('voucherHistory_dateFrom', dateFrom);
     localStorage.setItem('voucherHistory_dateTo', dateTo);
-    localStorage.setItem('voucherHistory_voucherType', voucherType);
-  }, [dateFrom, dateTo, voucherType]);
+  }, [dateFrom, dateTo]);
 
   const fetchVoucherData = async () => {
     if (!selectedCompany) return;
@@ -88,7 +96,7 @@ const VoucherHistoryReport = () => {
         ...(voucherType !== 'all' && { voucherTypeId: voucherType }),
       });
 
-      const resp = await fetch(`http://localhost:5000/api/vouchers/report/history?${params}`);
+      const resp = await fetch(`${API_BASE_URL}/vouchers/report/history?${params}`);
       if (!resp.ok) throw new Error('Failed to fetch voucher data');
       
       const json = await resp.json();
@@ -129,7 +137,6 @@ useEffect(() => {
 const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
     localStorage.setItem('voucherHistory_dateFrom', dateFrom);
     localStorage.setItem('voucherHistory_dateTo', dateTo);
-    localStorage.setItem('voucherHistory_voucherType', voucherType);
 
     // POS vouchers open in the POS screen
     if (isPos) {
@@ -157,10 +164,42 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
     }
   };
 
+  // Modal-based view-only voucher popup logic
+  const [viewVoucher, setViewVoucher] = useState<{
+    voucherId: string,
+    voucherTypeId: string,
+    voucherType: string,
+    voucherTypeName?: string,
+    isInventory?: boolean,
+    isPOS?: boolean
+  } | null>(null);
+  const [voucherTypeName, setVoucherTypeName] = useState<string>('');
+  const handleView = async (voucherId: string, voucherTypeId: string, voucherType: string, isPos: boolean) => {
+    localStorage.setItem('voucherHistory_dateFrom', dateFrom);
+    localStorage.setItem('voucherHistory_dateTo', dateTo);
+    if (!voucherId || !voucherTypeId) return;
+    if (isPos) {
+      navigate(`/pos?view=${voucherId}`);
+      return;
+    }
+    // Fetch voucher type meta to determine if inventory or accounting
+    try {
+      const resp = await fetch(`${API_BASE_URL}/voucher-types/${voucherTypeId}`);
+      const json = await resp.json();
+      const vt = json.data;
+      const isInventory = vt && ['sales', 'credit-note', 'purchase', 'debit-note'].includes(vt.base_type);
+      const isPOS = vt && vt.is_pos;
+      setVoucherTypeName(vt?.name || voucherType);
+      setViewVoucher({ voucherId, voucherTypeId, voucherType, voucherTypeName: vt?.name, isInventory, isPOS });
+    } catch {
+      setVoucherTypeName(voucherType);
+      setViewVoucher({ voucherId, voucherTypeId, voucherType });
+    }
+  };
   const handleDelete = async (voucherId: string) => {
     if (!confirm('Are you sure you want to delete this voucher?')) return;
     try {
-      const resp = await fetch(`http://localhost:5000/api/vouchers/${voucherId}`, {
+      const resp = await fetch(`${API_BASE_URL}/vouchers/${voucherId}`, {
         method: 'DELETE',
       });
       if (!resp.ok) throw new Error('Failed to delete voucher');
@@ -172,14 +211,21 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
     }
   };
 
+  const handlePrintVoucher = (item: VoucherEntry) => {
+    localStorage.setItem('voucherHistory_dateFrom', dateFrom);
+    localStorage.setItem('voucherHistory_dateTo', dateTo);
+    if (item.is_pos) {
+      navigate(`/pos?edit=${item.id}&autoPrint=1`, { state: { returnTo: '/reports/voucher-history' } });
+      return;
+    }
+    navigate(`/vouchers?typeId=${item.voucher_type_id}&edit=${item.id}&autoPrint=1`, { state: { returnTo: '/reports/voucher-history' } });
+  };
+
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+    const totalDebit = voucherData.reduce((sum, item) => sum + item.debit_amount, 0);
+    const totalCredit = voucherData.reduce((sum, item) => sum + item.credit_amount, 0);
 
-    const totalAmount = voucherData.reduce((sum, item) => sum + item.total_amount, 0);
-    const netAmount = voucherData.reduce((sum, item) => sum + item.net_amount, 0);
-
-    printWindow.document.write(`
+    const invoiceHtml = `
       <html>
         <head>
           <title>Voucher History Report</title>
@@ -225,24 +271,23 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                   <td>${item.voucher_number}</td>
                   <td class="voucher-type">${item.voucher_type_name}</td>
                   <td>${item.particulars}</td>
-                  <td class="amount">${currencySymbol} ${item.total_amount.toFixed(2)}</td>
-                  <td class="amount">${currencySymbol} ${item.net_amount.toFixed(2)}</td>
+                  <td class="amount">${item.debit_amount > 0 ? `${currencySymbol} ${item.debit_amount.toFixed(2)}` : ''}</td>
+                  <td class="amount">${item.credit_amount > 0 ? `${currencySymbol} ${item.credit_amount.toFixed(2)}` : ''}</td>
                   <td>${item.narration || ''}</td>
                 </tr>
               `).join('')}
               <tr class="total-row">
                 <td colspan="4"><strong>Total</strong></td>
-                <td class="amount"><strong>${currencySymbol} ${totalAmount.toFixed(2)}</strong></td>
-                <td class="amount"><strong>${currencySymbol} ${netAmount.toFixed(2)}</strong></td>
+                <td class="amount"><strong>${currencySymbol} ${totalDebit.toFixed(2)}</strong></td>
+                <td class="amount"><strong>${currencySymbol} ${totalCredit.toFixed(2)}</strong></td>
                 <td></td>
               </tr>
             </tbody>
           </table>
         </body>
       </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
+    `;
+    setPrintPreviewHtml(invoiceHtml);
   };
    // 🔹 Reset filters to default
 
@@ -302,7 +347,7 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                 id="date-from"
                 type="date"
                 value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
+                onChange={(e) => { setDateFrom(e.target.value); setUserChangedDates(true); }}
               />
             </div>
             <div>
@@ -311,7 +356,7 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                 id="date-to"
                 type="date"
                 value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
+                onChange={(e) => { setDateTo(e.target.value); setUserChangedDates(true); }}
               />
             </div>
             <div>
@@ -365,20 +410,39 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                         <TableCell>{item.narration || ''}</TableCell>
                         <TableCell>
                         <div className="flex gap-1">
+                          {canVoucher(item.voucher_type_id, 'view') && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              title="View"
+                              onClick={() => (handleView(item.id, item.voucher_type_id, item.voucher_type, item.is_pos))}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </>
+                          )}
+                          {canVoucher(item.voucher_type_id, 'edit') && (
                           <Button
                             size="sm"
                             variant="outline"
+                            title="Edit"
                             onClick={() => handleEdit(item.id, item.voucher_type, item.is_pos)}
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
+                          )}
+                          {/* Print button removed from row actions */}
+                          {canVoucher(item.voucher_type_id, 'delete') && (
                           <Button
                             size="sm"
                             variant="outline"
+                            title="Delete"
                             onClick={() => handleDelete(item.id)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
+                          )}
                         </div>
                         </TableCell>
                       </TableRow>
@@ -395,6 +459,54 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
                     </TableRow>
                   </TableBody>
                 </Table>
+                {viewVoucher && (
+                <VoucherViewModal
+                  open={!!viewVoucher}
+                  onOpenChange={(open) => {
+                  if (!open) {
+                  setViewVoucher(null);
+                  if (document.activeElement instanceof HTMLElement) {
+                  document.activeElement.blur();
+                }}}}
+                >
+                <div className="px-6 pt-4 pb-2 border-b flex items-center justify-between">
+                  <span className="font-semibold text-lg">
+                    {viewVoucher.voucherTypeName || voucherTypeName || viewVoucher.voucherType}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setViewVoucher(null)}
+          >
+            Close
+          </Button>
+        </div>
+
+        {viewVoucher.isPOS ? (
+        <POSViewForm
+          voucherId={viewVoucher.voucherId}
+          onClose={() => setViewVoucher(null)}
+        />
+      ) : viewVoucher.isInventory ? (
+      <InventoryVchViewForm
+        voucherId={viewVoucher.voucherId}
+        voucherTypeId={viewVoucher.voucherTypeId}
+        voucherType={
+          ["sales", "credit-note", "purchase", "debit-note"].includes(viewVoucher.voucherType)
+            ? (viewVoucher.voucherType as "sales" | "credit-note" | "purchase" | "debit-note")
+            : "sales"
+        }
+        onClose={() => setViewVoucher(null)}
+      />
+    ) : (
+      <AccountingVchViewForm
+        voucherId={viewVoucher.voucherId}
+        voucherTypeId={viewVoucher.voucherTypeId}
+        onClose={() => setViewVoucher(null)}
+      />
+    )}
+    </VoucherViewModal>
+    )}
               </>
             ) : (
               <div className="text-center py-8 text-muted-foreground">
@@ -405,6 +517,39 @@ const handleEdit = (voucherId: string, voucherType: string, isPos: boolean) => {
         </Card>
         </div>
       </div>
+
+      {/* ── Print Preview Modal ── */}
+      {printPreviewHtml && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setPrintPreviewHtml(null); }}
+        >
+          <div className="flex items-center justify-between bg-white px-4 py-2 border-b shadow-sm">
+            <span className="font-semibold text-sm">Print Preview</span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const ifw = printIframeRef.current?.contentWindow;
+                  if (ifw) { ifw.focus(); ifw.print(); }
+                }}
+              >
+                <Printer className="h-4 w-4 mr-1" />
+                Print
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setPrintPreviewHtml(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+          <iframe
+            ref={printIframeRef}
+            srcDoc={printPreviewHtml}
+            className="flex-1 w-full bg-white"
+            title="Print Preview"
+          />
+        </div>
+      )}
     </div>
   );
 };

@@ -39,6 +39,7 @@ export async function createCompanyService(companyData, userId) {
       id: companyId,
       ...companyDataToSave,
       user_id: userId,
+      license_id: companyData.license_id || null,
       admin_password_hash: hashedPassword,
       created_by: userId,
       settings: DEFAULT_SETTINGS,
@@ -62,6 +63,8 @@ export async function createCompanyService(companyData, userId) {
       user_id: userId,
       username: companyData.admin_username,
       password_hash: hashedPassword,
+      is_admin: true,
+      role_id: null,
       is_active: true,
       created_at: new Date(),
       updated_at: new Date(),
@@ -94,14 +97,20 @@ export async function createCompanyService(companyData, userId) {
 }
 
 /**
- * Get all companies for a user
+ * Get all companies for a user.
+ * When licenseId is provided, returns ALL companies under that license
+ * (visible to every user on the same license).
+ * Falls back to user_id query when no licenseId is given.
  */
-export async function getUserCompanies(userId) {
+export async function getUserCompanies(userId, licenseId) {
   try {
     const db = getDb();
+    const query = licenseId
+      ? { license_id: licenseId }
+      : { user_id: userId };
     const data = await db
       .collection("companies")
-      .find({ user_id: userId })
+      .find(query)
       .toArray();
     return { success: true, data };
   } catch (error) {
@@ -170,6 +179,9 @@ export async function loginToCompanyService(
       company_id: companyUser.company_id,
       user_id: companyUser.user_id,
       username: companyUser.username,
+      full_name: companyUser.full_name || companyUser.username,
+      is_admin: companyUser.is_admin || false,
+      role_id: companyUser.role_id || null,
       is_active: companyUser.is_active,
       created_at: companyUser.created_at,
       updated_at: companyUser.updated_at,
@@ -199,11 +211,17 @@ export async function loginToCompanyService(
  */
 export async function updateCompanyService(companyId, updateData, userId) {
   try {
-    // Verify ownership
+    // Debug logging
+    console.log("[updateCompanyService] companyId:", companyId, "userId:", userId, "updateData:", updateData);
+
     const db = getDb();
     const company = await db.collection("companies").findOne({ id: companyId });
-    if (!company || company.user_id !== userId) {
-      throw new Error("Unauthorized: Company does not belong to user");
+    console.log("[updateCompanyService] found company:", company);
+    // Check if user is admin in company_users
+    const companyUser = await db.collection("company_users").findOne({ company_id: companyId, user_id: userId, is_active: true });
+    if (!companyUser || !companyUser.is_admin) {
+      console.warn("[updateCompanyService] User is not admin or not found in company_users");
+      throw new Error("Unauthorized: Only company admin can update company profile");
     }
 
     const res = await db
@@ -213,8 +231,10 @@ export async function updateCompanyService(companyId, updateData, userId) {
         { $set: { ...updateData, updated_at: new Date() } },
         { returnDocument: "after" }
       );
+    console.log("[updateCompanyService] update result:", res);
 
     if (!res.value) {
+      console.error("[updateCompanyService] Company update failed");
       throw new Error("Company update failed");
     }
 

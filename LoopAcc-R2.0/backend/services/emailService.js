@@ -189,6 +189,88 @@ This is an automated email from LoopAcc.
 }
 
 /**
+ * Send license activation notice to admin when a new user registers.
+ * @param {{ fullName: string, email: string, licenseId: string, registeredAt: string }} userInfo
+ */
+export async function sendLicenseActivationNotice(userInfo) {
+  const adminEmail = EMAIL_USER;
+  const { fullName, email, licenseId, registeredAt } = userInfo;
+
+  const mailOptions = {
+    from: EMAIL_FROM,
+    to: adminEmail,
+    subject: `New LoopAcc Registration — License Activation Required`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .detail-box { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
+          .detail-row { display: flex; margin-bottom: 10px; }
+          .detail-label { font-weight: bold; color: #6b7280; width: 140px; flex-shrink: 0; }
+          .detail-value { color: #111827; }
+          .notice { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px; }
+          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 30px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔔 New Registration</h1>
+            <p>LoopAcc — License Activation Required</p>
+          </div>
+          <div class="content">
+            <p>A new user has registered on LoopAcc and is waiting for license activation.</p>
+
+            <div class="detail-box">
+              <div class="detail-row">
+                <span class="detail-label">Full Name:</span>
+                <span class="detail-value">${fullName}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Email:</span>
+                <span class="detail-value">${email}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">License ID:</span>
+                <span class="detail-value" style="font-family:monospace;font-size:13px;">${licenseId}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Registered At:</span>
+                <span class="detail-value">${new Date(registeredAt).toLocaleString()}</span>
+              </div>
+            </div>
+
+            <div class="notice">
+              <strong>⚠️ Action Required</strong><br>
+              Please log in to the Admin Panel and activate this user's license so they can access LoopAcc.
+            </div>
+          </div>
+          <div class="footer">
+            <p>This is an automated notification from LoopAcc. Do not reply to this email.</p>
+            <p>&copy; ${new Date().getFullYear()} LoopAcc. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    text: `New LoopAcc Registration — License Activation Required\n\nFull Name: ${fullName}\nEmail: ${email}\nLicense ID: ${licenseId}\nRegistered At: ${new Date(registeredAt).toLocaleString()}\n\nPlease log in to the Admin Panel and activate this user's license.`,
+  };
+
+  const result = await sendWithFallback(mailOptions);
+  if (!result.success) {
+    console.warn("⚠️  Failed to send license activation notice:", result.error);
+  } else {
+    console.log(`✓ License activation notice sent to ${adminEmail} for user ${email}`);
+  }
+  return result;
+}
+
+/**
  * Test email configuration
  */
 export async function testEmailConfiguration() {

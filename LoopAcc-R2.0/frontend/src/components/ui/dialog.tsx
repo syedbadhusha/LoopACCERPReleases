@@ -15,16 +15,27 @@ const DialogClose = DialogPrimitive.Close
 const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
-    ref={ref}
-    className={cn(
-      "fixed inset-0 z-50 bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-      className
-    )}
-    {...props}
-  />
-))
+>(({ className, ...props }, ref) => {
+  // Add inert attribute when dialog is open to prevent aria-hidden/focus issues
+  // Radix sets aria-hidden on overlay, but inert is more robust for focus management
+  // See: https://github.com/radix-ui/primitives/issues/1740
+  const [inertAttr, setInertAttr] = React.useState(false);
+  React.useEffect(() => {
+    if (props['data-state'] === 'open') setInertAttr(true);
+    else setInertAttr(false);
+  }, [props['data-state']]);
+  return (
+    <DialogPrimitive.Overlay
+      ref={ref}
+      className={cn(
+        "fixed inset-0 z-50 bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+        className
+      )}
+      {...props}
+      {...(inertAttr ? { inert: '' } : {})}
+    />
+  );
+});
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef<

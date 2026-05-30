@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,6 +15,7 @@ import { BatchAllocationDialog } from '@/components/BatchAllocationDialog';
 import QuickCreateLedgerDialog from '@/components/QuickCreateLedgerDialog';
 import QuickCreateItemDialog from '@/components/QuickCreateItemDialog';
 import type { VoucherTypeMeta } from './VoucherForm';
+import { API_BASE_URL } from '@/config/runtime';
 
 /** Returns the effective rate (sales or purchase cost) for an item as of a given date. */
 function getEffectiveItemRate(item: any, isSales: boolean, forDate?: string): number {
@@ -66,17 +67,20 @@ interface AdditionalLedgerEntry {
 interface InventoryFormProps {
   voucherType?: 'sales' | 'credit-note' | 'purchase' | 'debit-note';
   voucherTypeMeta?: VoucherTypeMeta;
+  viewOnly?: boolean;
+  autoPrint?: boolean;
 }
 
-const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryFormProps) => {
+const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta, viewOnly = false, autoPrint = false }: InventoryFormProps) => {
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = location.state?.returnTo;
   const { toast } = useToast();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, currentDate, periodFrom, periodTo } = useCompany();
   const isTaxEnabled = isCompanyTaxEnabled(selectedCompany);
   const companyTaxType = getCompanyTaxType(selectedCompany);
   const companyBatchesEnabled = isCompanyBatchesEnabled(selectedCompany);
+  const defaultVoucherDate = currentDate || selectedCompany?.last_voucher_date || new Date().toISOString().split('T')[0];
   const [loading, setLoading] = useState(false);
 
   const actualVoucherType = voucherType || 'sales';
@@ -97,15 +101,19 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
 
   const searchParams = new URLSearchParams(location.search);
   const editVoucherId = searchParams.get('edit');
+  const isViewOnlyMode = viewOnly || (searchParams.get('view') === '1');
+  // Accept voucherId prop for view-only popup mode
+  const voucherIdFromProps = (typeof (window as any).__copilot_voucherId !== 'undefined') ? (window as any).__copilot_voucherId : undefined;
+  const effectiveVoucherId = voucherIdFromProps || editVoucherId;
   const isEditMode = !!editVoucherId;
-
-  const formTitle = isEditMode ? `Edit ${typeDisplayName}` : `Create ${typeDisplayName}`;
+  const isViewPopupMode = !!voucherIdFromProps && isViewOnlyMode;
+  const formTitle = isViewOnlyMode ? `View ${typeDisplayName}` : isEditMode ? `Edit ${typeDisplayName}` : `Create ${typeDisplayName}`;
   const invoiceLabel = typeDisplayName;
 
   const [formData, setFormData] = useState({
     ledger_id: '',
     voucher_number: '',
-    voucher_date: new Date().toISOString().split('T')[0],
+    voucher_date: defaultVoucherDate,
     reference_number: '',
     reference_date: '',
     narration: '',
@@ -140,19 +148,33 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
   const [quickCreateItemOpen, setQuickCreateItemOpen] = useState(false);
   const [originalDocId, setOriginalDocId] = useState('');
   const [originalVouchers, setOriginalVouchers] = useState<any[]>([]);
+  const [printPreviewHtml, setPrintPreviewHtml] = useState<string | null>(null);
+  const printIframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     if (!selectedCompany) return;
     const init = async () => {
       const loaded = await fetchInitialData();
-      if (isEditMode && editVoucherId) {
-        await loadExistingVoucher(editVoucherId, loaded || []);
+      if ((isEditMode && editVoucherId) || isViewPopupMode) {
+        await loadExistingVoucher(effectiveVoucherId, loaded || []);
       } else {
         await generateVoucherNumber();
       }
     };
     init();
-  }, [selectedCompany, isEditMode, editVoucherId]);
+  }, [selectedCompany, isEditMode, editVoucherId, isViewPopupMode, effectiveVoucherId]);
+
+  // Auto-open print preview or view modal if autoPrint or viewOnly is set and voucher is loaded
+  useEffect(() => {
+    if ((isViewOnlyMode || autoPrint) && isEditMode && savedVoucher) {
+      // Only open if not already open
+      if (autoPrint && !printPreviewHtml) {
+        handlePrint();
+      }
+      // Optionally, show a modal for viewOnly mode
+    }
+    // eslint-disable-next-line
+  }, [isViewOnlyMode, autoPrint, isEditMode, savedVoucher]);
 
   useEffect(() => {
     if (selectedCompany?.settings) {
@@ -185,7 +207,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         };
         const settingKeys = keyMap[actualVoucherType] || 'invoice_prefix,invoice_starting_number';
         const settingsResponse = await fetch(
-          `http://localhost:5000/api/settings?companyId=${selectedCompany.id}&keys=${settingKeys}`
+          `${API_BASE_URL}/settings?companyId=${selectedCompany.id}&keys=${settingKeys}`
         );
         if (settingsResponse.ok) {
           const settingsResult = await settingsResponse.json();
@@ -200,7 +222,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       }
 
       const vouchersResponse = await fetch(
-        `http://localhost:5000/api/vouchers?companyId=${selectedCompany.id}`
+        `${API_BASE_URL}/vouchers?companyId=${selectedCompany.id}`
       );
       let nextNumber = startingNumber;
       if (vouchersResponse.ok) {
@@ -231,9 +253,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
     let ledgersWithGroupNames: any[] = [];
     try {
       const [ledgersRes, itemsRes, vouchersRes] = await Promise.all([
-        fetch(`http://localhost:5000/api/ledgers?companyId=${selectedCompany.id}`),
-        fetch(`http://localhost:5000/api/items?companyId=${selectedCompany.id}`),
-        fetch(`http://localhost:5000/api/vouchers?companyId=${selectedCompany.id}`),
+        fetch(`${API_BASE_URL}/ledgers?companyId=${selectedCompany.id}`),
+        fetch(`${API_BASE_URL}/items?companyId=${selectedCompany.id}`),
+        fetch(`${API_BASE_URL}/vouchers?companyId=${selectedCompany.id}`),
       ]);
       const ledgersJson = await ledgersRes.json();
       const itemsJson = await itemsRes.json();
@@ -264,9 +286,10 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
 
   const loadExistingVoucher = async (voucherId: string, preloadedLedgers: any[] = []) => {
     if (!selectedCompany) return;
+
     try {
       setLoading(true);
-      const response = await fetch(`http://localhost:5000/api/vouchers/${voucherId}`);
+      const response = await fetch(`${API_BASE_URL}/vouchers/${voucherId}`);
       if (!response.ok) throw new Error('Failed to load voucher');
       const result = await response.json();
       const voucher = result.data;
@@ -275,14 +298,27 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       const ledgerDetails = voucherDetails.filter((d: any) => d.ledger_id && !d.item_id) || [];
       const availableLedgers = preloadedLedgers.length > 0 ? preloadedLedgers : (ledgersState.length > 0 ? ledgersState : ledgers);
 
-      const inventoryLedgerDetail =
-        ledgerDetails.find((d: any) => d.isinventory === 'yes') ||
-        ledgerDetails.find((d: any) => {
+      // Enhanced logic for inventory ledger detection
+      let inventoryLedgerDetail = ledgerDetails.find((d: any) => d.isinventory === 'yes');
+      if (!inventoryLedgerDetail) {
+        inventoryLedgerDetail = ledgerDetails.find((d: any) => {
           if (!d?.ledger_id || d.ledger_id === voucher.ledger_id) return false;
           const ledger = availableLedgers.find((l: any) => l.id === d.ledger_id);
-          const classifier = `${ledger?.group_name || ''} ${ledger?.name || ''}`.toLowerCase();
-          return isSales ? classifier.includes('sale') : classifier.includes('purchase');
+          if (!ledger) return false;
+          const group = (ledger.group_name || '').toLowerCase();
+          const name = (ledger.name || '').toLowerCase();
+          // Accept both 'purchase' and 'expense' for purchase, 'sales' and 'income' for sales
+          if (isSales) {
+            return group.includes('sale') || group.includes('income') || name.includes('sale');
+          } else {
+            return group.includes('purchase') || group.includes('expense') || name.includes('purchase');
+          }
         });
+      }
+      // Fallback: pick first ledger that is not the party ledger
+      if (!inventoryLedgerDetail) {
+        inventoryLedgerDetail = ledgerDetails.find((d: any) => d.ledger_id !== voucher.ledger_id);
+      }
       const resolvedInventoryLedgerId = inventoryLedgerDetail?.ledger_id || '';
       if (resolvedInventoryLedgerId) setSelectedInventoryLedgerId(resolvedInventoryLedgerId);
 
@@ -358,6 +394,10 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         calculateTotals(loadedItemsData, recalculated);
       }
       setSavedVoucher(voucher);
+      // Auto-print after load (used by per-row print in reports)
+      if (autoPrint) {
+        setTimeout(() => handlePrint(voucher), 500);
+      }
     } catch (error) {
       console.error('Error loading existing voucher:', error);
       toast({ title: 'Error', description: 'Failed to load voucher data', variant: 'destructive' });
@@ -664,6 +704,15 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
     e.preventDefault();
     if (!selectedCompany) return;
 
+    if (periodFrom && periodTo && (formData.voucher_date < periodFrom || formData.voucher_date > periodTo)) {
+      toast({
+        title: 'Date Out of Period',
+        description: `Voucher date must be within the current period (${periodFrom} to ${periodTo}).`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!formData.ledger_id) {
       toast({ title: 'Validation Error', description: `Please select a ${partyLabel}.`, variant: 'destructive' });
       return;
@@ -767,8 +816,8 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       };
 
       const apiUrl = isEditMode && editVoucherId
-        ? `http://localhost:5000/api/vouchers/${editVoucherId}`
-        : `http://localhost:5000/api/vouchers`;
+        ? `${API_BASE_URL}/vouchers/${editVoucherId}`
+        : `${API_BASE_URL}/vouchers`;
       const method = isEditMode ? 'PUT' : 'POST';
 
       const response = await fetch(apiUrl, {
@@ -796,7 +845,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       } else {
         setFormData({
           ledger_id: '', voucher_number: '',
-          voucher_date: new Date().toISOString().split('T')[0],
+          voucher_date: defaultVoucherDate,
           reference_number: '', reference_date: '',
           narration: '', total_amount: 0, tax_amount: 0, net_amount: 0,
         });
@@ -821,8 +870,8 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
       toast({ title: 'Error', description: 'Please save the invoice first', variant: 'destructive' });
       return;
     }
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+
+    // Build the invoice HTML and show it in a same-tab preview modal.
 
     const numberToWords = (value: number): string => {
       const ones = ['Zero','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
@@ -1030,7 +1079,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         </td></tr>`
       : '';
 
-    printWindow.document.write(`
+    const invoiceHtml = `
       <html><head>
         <title>${printTitle} - ${voucherToPrint.voucher_number}</title>
         <style>
@@ -1129,10 +1178,8 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
           </tr>
         </table>
       </body></html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => { try { printWindow.print(); } catch {} }, 100);
+    `;
+    setPrintPreviewHtml(invoiceHtml);
   };
 
   if (!selectedCompany) {
@@ -1172,7 +1219,13 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <h1 className="text-2xl font-bold">{formTitle}</h1>
+            {isViewOnlyMode && (
+              <span className="ml-3 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">
+                View Only
+              </span>
+            )}
           </div>
+          {/* Print button shown in view only mode */}
           {savedVoucher && (
             <Button onClick={() => handlePrint()} variant="outline">
               <Printer className="h-4 w-4 mr-2" />
@@ -1207,7 +1260,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                   <div className="flex gap-2">
                     <SearchableDropdown
                       value={formData.ledger_id}
-                      onValueChange={(value) => setFormData({ ...formData, ledger_id: value })}
+                      onValueChange={isViewOnlyMode ? undefined : (value) => setFormData({ ...formData, ledger_id: value })}
                       placeholder={`Select ${partyLabel}`}
                       options={ledgers
                         .filter((ledger) => {
@@ -1217,13 +1270,16 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                           return targetGroups.includes(directGroup) || targetGroups.includes(parentGroup);
                         })
                         .map((ledger) => ({ value: ledger.id, label: `${ledger.name} (${ledger.group_name})` }))}
+                      disabled={isViewOnlyMode}
                     />
-                    <Button type="button" variant="outline" size="sm" onClick={() => {
-                      setQuickCreateLedgerDefaultGroup(partyDefaultGroup);
-                      setQuickCreateLedgerOpen(true);
-                    }}>
-                      <Plus className="h-4 w-4" />
-                    </Button>
+                    {!isViewOnlyMode && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => {
+                        setQuickCreateLedgerDefaultGroup(partyDefaultGroup);
+                        setQuickCreateLedgerOpen(true);
+                      }}>
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -1232,18 +1288,21 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                   <div className="flex gap-2">
                     <SearchableDropdown
                       value={selectedInventoryLedgerId}
-                      onValueChange={setSelectedInventoryLedgerId}
+                      onValueChange={isViewOnlyMode ? undefined : setSelectedInventoryLedgerId}
                       placeholder={`Select ${isSales ? 'Sales' : 'Purchase'} Ledger`}
                       options={ledgers
                         .filter((ledger) => inventoryLedgerGroups.includes(ledger.ledger_groups?.name) || inventoryLedgerGroups.includes(ledger.group_name))
                         .map((ledger) => ({ value: ledger.id, label: ledger.name }))}
+                      disabled={isViewOnlyMode}
                     />
-                    <Button type="button" variant="outline" size="sm" onClick={() => {
-                      setQuickCreateLedgerDefaultGroup(undefined);
-                      setQuickCreateLedgerOpen(true);
-                    }}>
-                      <Plus className="h-4 w-4" />
-                    </Button>
+                    {!isViewOnlyMode && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => {
+                        setQuickCreateLedgerDefaultGroup(undefined);
+                        setQuickCreateLedgerOpen(true);
+                      }}>
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -1262,8 +1321,10 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                   <Input
                     type="date"
                     value={formData.voucher_date}
-                    onChange={(e) => setFormData({ ...formData, voucher_date: e.target.value })}
+                    onChange={isViewOnlyMode ? undefined : (e) => setFormData({ ...formData, voucher_date: e.target.value })}
                     required
+                    readOnly={isViewOnlyMode}
+                    className={isViewOnlyMode ? 'bg-muted' : ''}
                   />
                 </div>
 
@@ -1271,8 +1332,10 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                   <Label>Reference Number</Label>
                   <Input
                     value={formData.reference_number}
-                    onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
+                    onChange={isViewOnlyMode ? undefined : (e) => setFormData({ ...formData, reference_number: e.target.value })}
                     placeholder="Enter reference number"
+                    readOnly={isViewOnlyMode}
+                    className={isViewOnlyMode ? 'bg-muted' : ''}
                   />
                 </div>
 
@@ -1290,7 +1353,7 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                             setOriginalDocId(id);
                             if (!id) return;
                             try {
-                              const res = await fetch(`http://localhost:5000/api/vouchers/${id}`);
+                              const res = await fetch(`${API_BASE_URL}/vouchers/${id}`);
                               const json = await res.json();
                               const orig = json?.data;
                               if (!orig) return;
@@ -1348,7 +1411,9 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                   <Input
                     type="date"
                     value={formData.reference_date}
-                    onChange={(e) => setFormData({ ...formData, reference_date: e.target.value })}
+                    onChange={isViewOnlyMode ? undefined : (e) => setFormData({ ...formData, reference_date: e.target.value })}
+                    readOnly={isViewOnlyMode}
+                    className={isViewOnlyMode ? 'bg-muted' : ''}
                   />
                 </div>
               </div>
@@ -1356,9 +1421,11 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                 <Label>Narration</Label>
                 <Textarea
                   value={formData.narration}
-                  onChange={(e) => setFormData({ ...formData, narration: e.target.value })}
+                  onChange={isViewOnlyMode ? undefined : (e) => setFormData({ ...formData, narration: e.target.value })}
                   placeholder="Enter description"
                   rows={3}
+                  readOnly={isViewOnlyMode}
+                  className={isViewOnlyMode ? 'bg-muted' : ''}
                 />
               </div>
             </CardContent>
@@ -1368,10 +1435,12 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
             <CardHeader>
               <div className="flex justify-between items-center">
                 <CardTitle>Items</CardTitle>
-                <Button type="button" onClick={addInventoryItem} size="sm">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Item
-                </Button>
+                {!isViewOnlyMode && (
+                  <Button type="button" onClick={addInventoryItem} size="sm">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Item
+                  </Button>
+                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -1386,22 +1455,25 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                         <Label>Item</Label>
                         <div className="flex gap-1">
                           <Input
-                            className="w-full"
+                            className={`w-full${isViewOnlyMode ? ' bg-muted' : ''}`}
                             list="inventory-items-datalist"
                             placeholder="Type or select item"
                             value={itemSearchByRow[item.id] ?? selectedItemMaster?.name ?? ''}
-                            onChange={(e) => handleInventoryItemSearchChange(index, item.id, e.target.value)}
-                            onBlur={() => handleInventoryItemSearchBlur(index, item.id)}
+                            onChange={isViewOnlyMode ? undefined : (e) => handleInventoryItemSearchChange(index, item.id, e.target.value)}
+                            onBlur={isViewOnlyMode ? undefined : () => handleInventoryItemSearchBlur(index, item.id)}
+                            readOnly={isViewOnlyMode}
                           />
                           <datalist id="inventory-items-datalist">
                             {items.map((product) => (
                               <option key={product.id} value={product.name} />
                             ))}
                           </datalist>
-                          <Button type="button" variant="outline" size="sm" onClick={() => setQuickCreateItemOpen(true)}>
-                            <Plus className="h-4 w-4" />
-                          </Button>
-                          {isBatchEnabled && (
+                          {!isViewOnlyMode && (
+                            <Button type="button" variant="outline" size="sm" onClick={() => setQuickCreateItemOpen(true)}>
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {isBatchEnabled && !isViewOnlyMode && (
                             <Button
                               type="button"
                               variant={item.batch_id ? 'default' : 'outline'}
@@ -1419,34 +1491,34 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                         <div>
                           <Label>Qty</Label>
                           <Input type="number" value={item.quantity}
-                            onChange={(e) => updateInventoryItem(index, 'quantity', parseFloat(e.target.value) || 0)}
-                            min="0" step="1" readOnly={isReadOnly} className={isReadOnly ? 'bg-muted' : ''} />
+                            onChange={isViewOnlyMode ? undefined : (e) => updateInventoryItem(index, 'quantity', parseFloat(e.target.value) || 0)}
+                            min="0" step="1" readOnly={isReadOnly || isViewOnlyMode} className={isReadOnly || isViewOnlyMode ? 'bg-muted' : ''} />
                         </div>
                         <div>
                           <Label>Rate</Label>
                           <Input type="number" value={item.rate}
-                            onChange={(e) => updateInventoryItem(index, 'rate', parseFloat(e.target.value) || 0)}
-                            min="0" step="0.01" readOnly={isReadOnly} className={isReadOnly ? 'bg-muted' : ''} />
+                            onChange={isViewOnlyMode ? undefined : (e) => updateInventoryItem(index, 'rate', parseFloat(e.target.value) || 0)}
+                            min="0" step="0.01" readOnly={isReadOnly || isViewOnlyMode} className={isReadOnly || isViewOnlyMode ? 'bg-muted' : ''} />
                         </div>
                         {showDiscountColumn && (
                           <>
                             <div>
                               <Label>Disc %</Label>
-                              <Input type="number" value={item.discount_percent}
-                                onChange={(e) => updateInventoryItem(index, 'discount_percent', parseFloat(e.target.value) || 0)}
-                                min="0" step="0.01"
-                                readOnly={discountEntryMode === 'amount'}
-                                className={discountEntryMode === 'amount' ? 'bg-muted' : ''}
-                              />
+                                <Input type="number" value={item.discount_percent}
+                                  onChange={isViewOnlyMode ? undefined : (e) => updateInventoryItem(index, 'discount_percent', parseFloat(e.target.value) || 0)}
+                                  min="0" step="0.01"
+                                  readOnly={discountEntryMode === 'amount' || isViewOnlyMode}
+                                  className={discountEntryMode === 'amount' || isViewOnlyMode ? 'bg-muted' : ''}
+                                />
                             </div>
                             <div>
                               <Label>Disc Amt</Label>
-                              <Input type="number" value={parseFloat(item.discount_amount.toFixed(2))}
-                                onChange={(e) => updateInventoryItem(index, 'discount_amount', parseFloat(e.target.value) || 0)}
-                                min="0" step="0.01"
-                                readOnly={discountEntryMode === 'percent'}
-                                className={discountEntryMode === 'percent' ? 'bg-muted' : ''}
-                              />
+                                <Input type="number" value={parseFloat(item.discount_amount.toFixed(2))}
+                                  onChange={isViewOnlyMode ? undefined : (e) => updateInventoryItem(index, 'discount_amount', parseFloat(e.target.value) || 0)}
+                                  min="0" step="0.01"
+                                  readOnly={discountEntryMode === 'percent' || isViewOnlyMode}
+                                  className={discountEntryMode === 'percent' || isViewOnlyMode ? 'bg-muted' : ''}
+                                />
                             </div>
                           </>
                         )}
@@ -1455,10 +1527,10 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                           <Input
                             type="number"
                             value={parseFloat(item.amount.toFixed(2))}
-                            onChange={e => updateInventoryItem(index, 'amount', parseFloat(e.target.value) || 0)}
+                            onChange={isViewOnlyMode ? undefined : e => updateInventoryItem(index, 'amount', parseFloat(e.target.value) || 0)}
                             min="0" step="0.01"
-                            readOnly={isReadOnly}
-                            className={isReadOnly ? 'bg-muted' : ''}
+                            readOnly={isReadOnly || isViewOnlyMode}
+                            className={isReadOnly || isViewOnlyMode ? 'bg-muted' : ''}
                           />
                         </div>
                         {isTaxEnabled && (
@@ -1466,8 +1538,11 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                             <div>
                               <Label>Tax %</Label>
                               <Input type="number" value={item.tax_percent}
-                                onChange={(e) => updateInventoryItem(index, 'tax_percent', parseFloat(e.target.value) || 0)}
-                                min="0" step="0.01" />
+                                onChange={isViewOnlyMode ? undefined : (e) => updateInventoryItem(index, 'tax_percent', parseFloat(e.target.value) || 0)}
+                                min="0" step="0.01"
+                                readOnly={isViewOnlyMode}
+                                className={isViewOnlyMode ? 'bg-muted' : ''}
+                              />
                             </div>
                             <div>
                               <Label>{taxLabel}</Label>
@@ -1480,11 +1555,13 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                           </>
                         )}
                         <div className="flex items-end justify-center">
-                          <Button type="button" variant="outline" size="sm"
-                            onClick={() => removeInventoryItem(index)}
-                            disabled={inventoryItems.length === 1}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {!isViewOnlyMode && (
+                            <Button type="button" variant="outline" size="sm"
+                              onClick={() => removeInventoryItem(index)}
+                              disabled={inventoryItems.length === 1}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1506,10 +1583,12 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
             <CardHeader>
               <div className="flex justify-between items-center">
                 <CardTitle>Additional Ledger Entries</CardTitle>
-                <Button type="button" onClick={addAdditionalLedger} size="sm">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Ledger
-                </Button>
+                {!isViewOnlyMode && (
+                  <Button type="button" onClick={addAdditionalLedger} size="sm">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Ledger
+                  </Button>
+                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -1522,27 +1601,35 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
                         <div className="flex gap-2">
                           <SearchableDropdown
                             value={entry.ledger_id}
-                            onValueChange={(value) => handleAdditionalLedgerChange(entry.id, value)}
+                            onValueChange={isViewOnlyMode ? undefined : (value) => handleAdditionalLedgerChange(entry.id, value)}
                             placeholder="Select Ledger"
                             options={ledgers.map((ledger) => ({ value: ledger.id, label: `${ledger.name} (${ledger.group_name})` }))}
+                            disabled={isViewOnlyMode}
                           />
-                          <Button type="button" variant="outline" size="sm" onClick={() => {
-                            setQuickCreateLedgerDefaultGroup(undefined);
-                            setQuickCreateLedgerOpen(true);
-                          }}>
-                            <Plus className="h-4 w-4" />
-                          </Button>
+                          {!isViewOnlyMode && (
+                            <Button type="button" variant="outline" size="sm" onClick={() => {
+                              setQuickCreateLedgerDefaultGroup(undefined);
+                              setQuickCreateLedgerOpen(true);
+                            }}>
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <div className="w-48">
                         <Label>Amount</Label>
                         <Input type="number" step="0.01" value={entry.amount}
-                          onChange={(e) => handleAdditionalAmountChange(entry.id, parseFloat(e.target.value) || 0)}
-                          placeholder="0.00" />
+                          onChange={isViewOnlyMode ? undefined : (e) => handleAdditionalAmountChange(entry.id, parseFloat(e.target.value) || 0)}
+                          placeholder="0.00"
+                          readOnly={isViewOnlyMode}
+                          className={isViewOnlyMode ? 'bg-muted' : ''}
+                        />
                       </div>
-                      <Button type="button" variant="outline" size="sm" onClick={() => removeAdditionalLedger(entry.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {!isViewOnlyMode && (
+                        <Button type="button" variant="outline" size="sm" onClick={() => removeAdditionalLedger(entry.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1569,10 +1656,13 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
 
           <div className="flex justify-end space-x-4">
             <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>Cancel</Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? 'Saving...' : `${isEditMode ? 'Update' : 'Save'} ${invoiceLabel}`}
-            </Button>
-            {savedVoucher && (
+            {!isViewOnlyMode && (
+              <Button type="submit" disabled={loading}>
+                {loading ? 'Saving...' : `${isEditMode ? 'Update' : 'Save'} ${invoiceLabel}`}
+              </Button>
+            )}
+            {/* Print button removed in view only mode */}
+            {savedVoucher && !isViewOnlyMode && (
               <Button type="button" onClick={() => handlePrint()} variant="outline">
                 <Printer className="h-4 w-4 mr-2" />
                 Print
@@ -1620,6 +1710,39 @@ const InventoryForm = ({ voucherType = 'sales', voucherTypeMeta }: InventoryForm
         onClose={() => setQuickCreateItemOpen(false)}
         onCreated={handleItemCreated}
       />
+
+      {/* ── Print Preview Modal ── */}
+      {printPreviewHtml && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setPrintPreviewHtml(null); }}
+        >
+          <div className="flex items-center justify-between bg-white px-4 py-2 border-b shadow-sm">
+            <span className="font-semibold text-sm">Print Preview</span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const ifw = printIframeRef.current?.contentWindow;
+                  if (ifw) { ifw.focus(); ifw.print(); }
+                }}
+              >
+                <Printer className="h-4 w-4 mr-1" />
+                Print
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setPrintPreviewHtml(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+          <iframe
+            ref={printIframeRef}
+            srcDoc={printPreviewHtml}
+            className="flex-1 w-full bg-white"
+            title="Print Preview"
+          />
+        </div>
+      )}
       </div>
     </div>
   );

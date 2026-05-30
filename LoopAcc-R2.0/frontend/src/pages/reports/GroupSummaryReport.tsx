@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { usePermissions } from '@/contexts/PermissionContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { ArrowLeft, Calculator, Download, Printer } from 'lucide-react';
@@ -62,24 +63,25 @@ const splitSignedToDrCr = (signedAmount: number) => {
 
 const GroupSummaryReport = () => {
   const navigate = useNavigate();
-  const { selectedCompany } = useCompany();
+  const { can } = usePermissions();
+  const [noAccessMsg, setNoAccessMsg] = useState<string | null>(null);
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
   const [searchParams] = useSearchParams();
 
   const [dateFrom, setDateFrom] = useState(() => {
     const fromQuery = searchParams.get('dateFrom');
     if (fromQuery) return fromQuery;
-    const saved = localStorage.getItem('groupSummary_dateFrom');
-    if (saved) return saved;
-    const today = new Date();
-    const year = today.getMonth() < 3 ? today.getFullYear() - 1 : today.getFullYear();
-    return format(new Date(year, 3, 1), 'yyyy-MM-dd');
+    return periodFrom;
   });
   const [dateTo, setDateTo] = useState(() => {
     const toQuery = searchParams.get('dateTo');
     if (toQuery) return toQuery;
-    const saved = localStorage.getItem('groupSummary_dateTo');
-    return saved || format(new Date(), 'yyyy-MM-dd');
+    return periodTo;
   });
+
+  // Sync with global period when it changes (unless URL param override)
+  useEffect(() => { if (!searchParams.get('dateFrom')) setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { if (!searchParams.get('dateTo')) setDateTo(periodTo); }, [periodTo]);
 
   const [groups, setGroups] = useState<any[]>([]);
   const [ledgers, setLedgers] = useState<any[]>([]);
@@ -89,11 +91,6 @@ const GroupSummaryReport = () => {
   );
   const [lines, setLines] = useState<SummaryLine[]>([]);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    localStorage.setItem('groupSummary_dateFrom', dateFrom);
-    localStorage.setItem('groupSummary_dateTo', dateTo);
-  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     const nextGroupId = searchParams.get('groupId') || '';
@@ -384,12 +381,20 @@ const GroupSummaryReport = () => {
     const normalizedDateTo = dateFrom <= dateTo ? dateTo : dateFrom;
 
     if (line.type === 'group') {
+      if (!can('report_groupsummary')) {
+        setNoAccessMsg('No access to "Group Summary Report"');
+        return;
+      }
       navigate(
         `/reports/group-summary?groupId=${encodeURIComponent(line.id)}&dateFrom=${encodeURIComponent(normalizedDateFrom)}&dateTo=${encodeURIComponent(normalizedDateTo)}`,
       );
       return;
     }
 
+    if (!can('report_ledger')) {
+      setNoAccessMsg('No access to "Ledger Report"');
+      return;
+    }
     navigate(
       `/reports/ledger?ledgerId=${encodeURIComponent(line.id)}&dateFrom=${encodeURIComponent(normalizedDateFrom)}&dateTo=${encodeURIComponent(normalizedDateTo)}`,
     );
@@ -402,6 +407,12 @@ const GroupSummaryReport = () => {
 
   return (
     <div className="bg-background h-screen flex flex-col overflow-hidden">
+      {noAccessMsg && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-destructive text-white px-6 py-3 rounded shadow-lg">
+          {noAccessMsg}
+          <button className="ml-4 underline" onClick={() => setNoAccessMsg(null)}>Dismiss</button>
+        </div>
+      )}
       <div className="flex-shrink-0 bg-background border-b shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">
@@ -440,14 +451,18 @@ const GroupSummaryReport = () => {
                   <SelectValue placeholder="Choose a group" />
                 </SelectTrigger>
                 <SelectContent>
-                  {groups
-                    .slice()
-                    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')))
-                    .map((group) => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name}
-                      </SelectItem>
-                    ))}
+                  {groups.length === 0 ? (
+                    <div className="px-2 py-1 text-muted-foreground">No groups found</div>
+                  ) : (
+                    groups
+                      .slice()
+                      .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')))
+                      .map((group) => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))
+                  )}
                 </SelectContent>
               </Select>
             </div>

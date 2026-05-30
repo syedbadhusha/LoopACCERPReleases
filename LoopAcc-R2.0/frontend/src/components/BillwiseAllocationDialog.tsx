@@ -122,7 +122,7 @@ const BillwiseAllocationDialog = ({
     try {
       // Fetch existing bill allocations from opening balance entry
       const response = await fetch(
-        `http://localhost:5000/api/ledgers/${ledgerId}/bill-allocations?companyId=${companyId}`
+        `${API_BASE_URL}/ledgers/${ledgerId}/bill-allocations?companyId=${companyId}`
       );
 
       if (!response.ok) {
@@ -174,7 +174,7 @@ const BillwiseAllocationDialog = ({
     if (allocation.id) {
       try {
         const response = await fetch(
-          `http://localhost:5000/api/ledgers/${ledgerId}/bill-allocations/${allocation.id}?companyId=${companyId}`,
+          `${API_BASE_URL}/ledgers/${ledgerId}/bill-allocations/${allocation.id}?companyId=${companyId}`,
           { method: "DELETE" }
         );
 
@@ -262,7 +262,7 @@ const BillwiseAllocationDialog = ({
       }));
 
       const response = await fetch(
-        `http://localhost:5000/api/ledgers/${ledgerId}/bill-allocations`,
+        `${API_BASE_URL}/ledgers/${ledgerId}/bill-allocations`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

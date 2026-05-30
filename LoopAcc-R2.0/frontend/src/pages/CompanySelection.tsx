@@ -15,9 +15,54 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Building2, Plus, LogOut, Trash2 } from 'lucide-react';
+import { Building2, Plus, LogOut, Trash2, Users } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { API_BASE_URL } from '@/config/runtime';
+
+/** Compute the FY that contains the given date for a country, return { fyFrom, fyTo } */
+function getFYForDate(country: string, dateStr: string): { fyFrom: string; fyTo: string } {
+  const d = new Date(dateStr + 'T00:00:00');
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+  const code = (country || '').toUpperCase();
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  let startMonth = 1;
+  let fyStartYear = year;
+
+  if (['IN', 'INDIA', 'SG', 'SINGAPORE', 'GB', 'UK', 'UNITED KINGDOM'].includes(code)) {
+    startMonth = 4;
+    fyStartYear = month < 4 ? year - 1 : year;
+  } else if (['AU', 'AUSTRALIA', 'NZ', 'NEW ZEALAND'].includes(code)) {
+    startMonth = 7;
+    fyStartYear = month < 7 ? year - 1 : year;
+  } else {
+    startMonth = 1;
+    fyStartYear = year;
+  }
+
+  const fyEndYear = startMonth === 1 ? fyStartYear : fyStartYear + 1;
+  const endMonth = startMonth === 1 ? 12 : startMonth - 1;
+  const lastDay = new Date(fyEndYear, endMonth, 0).getDate();
+
+  return {
+    fyFrom: `${fyStartYear}-${pad(startMonth)}-01`,
+    fyTo: `${fyEndYear}-${pad(endMonth)}-${pad(lastDay)}`,
+  };
+}
+
+/** Get the display FY range for a company card:
+ *  - From: books_beginning (or financial_year_start as fallback)
+ *  - To:   FY-end of the period containing last_voucher_date (or financial_year_end as fallback)
+ */
+function getCompanyFYDisplay(company: any): { from: string; to: string } {
+  const from = company.books_beginning || company.financial_year_start || '';
+  if (company.last_voucher_date) {
+    const { fyTo } = getFYForDate(company.country, company.last_voucher_date);
+    return { from, to: fyTo };
+  }
+  return { from, to: company.financial_year_end || '' };
+}
 
 const CompanySelection = () => {
   const { user, signOut } = useAuth();
@@ -74,6 +119,16 @@ const CompanySelection = () => {
           
           <div className="flex items-center space-x-4">
             <Badge variant="secondary">{user?.email}</Badge>
+            {user?.is_owner && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/user-management')}
+              >
+                <Users className="mr-2 h-4 w-4" />
+                Manage Users
+              </Button>
+            )}
             <Button 
               variant="outline" 
               size="sm" 
@@ -97,23 +152,25 @@ const CompanySelection = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Create New Company Card */}
-            <Card 
-              className="cursor-pointer hover:shadow-lg transition-all border-dashed border-2 border-primary/30 hover:border-primary/50"
-              onClick={() => navigate('/create-company')}
-            >
-              <CardContent className="p-8 text-center">
-                <div className="mb-4">
-                  <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
-                    <Plus className="h-8 w-8 text-primary" />
+            {/* Create New Company Card — owner only */}
+            {user?.is_owner && (
+              <Card 
+                className="cursor-pointer hover:shadow-lg transition-all border-dashed border-2 border-primary/30 hover:border-primary/50"
+                onClick={() => navigate('/create-company')}
+              >
+                <CardContent className="p-8 text-center">
+                  <div className="mb-4">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
+                      <Plus className="h-8 w-8 text-primary" />
+                    </div>
                   </div>
-                </div>
-                <h3 className="text-lg font-semibold mb-2">Create New Company</h3>
-                <p className="text-sm text-muted-foreground">
-                  Set up a new company with all accounting features
-                </p>
-              </CardContent>
-            </Card>
+                  <h3 className="text-lg font-semibold mb-2">Create New Company</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Set up a new company with all accounting features
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Company Cards */}
             {loading ? (
@@ -137,15 +194,17 @@ const CompanySelection = () => {
                         <Building2 className="mr-3 h-5 w-5 text-primary" />
                         {company.name}
                       </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
-                        onClick={(e) => handleDeleteClick(e, company)}
-                        title="Delete company"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {user?.is_owner && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+                          onClick={(e) => handleDeleteClick(e, company)}
+                          title="Delete company"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -165,8 +224,8 @@ const CompanySelection = () => {
                         <span>{company.currency}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">FY:</span>
-                        <span>{company.financial_year_start} - {company.financial_year_end}</span>
+                        <span className="text-muted-foreground">Company from:</span>
+                        <span>{getCompanyFYDisplay(company).from} → {getCompanyFYDisplay(company).to}</span>
                       </div>
                     </div>
                     <div className="mt-4 pt-4 border-t">

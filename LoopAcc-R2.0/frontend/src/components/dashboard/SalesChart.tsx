@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCompany } from '@/contexts/CompanyContext';
-
+import { API_BASE_URL } from '@/config/runtime';
 const SalesChart = () => {
   const { selectedCompany } = useCompany();
   const [chartData, setChartData] = useState<any[]>([]);
@@ -20,7 +20,7 @@ const SalesChart = () => {
       const params = new URLSearchParams({
         companyId: selectedCompany?.id || '',
       });
-      const resp = await fetch(`http://localhost:5000/api/vouchers?${params}`);
+      const resp = await fetch(`${API_BASE_URL}/vouchers?${params}`);
       if (!resp.ok) throw new Error('Failed to fetch sales data');
       
       const json = await resp.json();

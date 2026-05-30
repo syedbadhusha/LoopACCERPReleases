@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { usePermissions } from '@/contexts/PermissionContext';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -94,17 +95,16 @@ const computeInventoryLineQty = (line: any) => Math.abs(money(line?.quantity));
 
 const ProfitLossReport = () => {
   const navigate = useNavigate();
-  const { selectedCompany } = useCompany();
+  const { can } = usePermissions();
+  const [noAccessMsg, setNoAccessMsg] = useState<string | null>(null);
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
   const currencySymbol = selectedCompany?.currency === 'INR' ? '₹' : selectedCompany?.currency === 'USD' ? '$' : selectedCompany?.currency || '₹';  
-  const [dateFrom, setDateFrom] = useState(() => {
-    const saved = localStorage.getItem('profitLoss_dateFrom');
-    if (saved) return saved;
-    return getFiscalYearStart();
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    const saved = localStorage.getItem('profitLoss_dateTo');
-    return saved || format(new Date(), 'yyyy-MM-dd');
-  });
+  const [dateFrom, setDateFrom] = useState(periodFrom);
+  const [dateTo, setDateTo] = useState(periodTo);
+
+  // Sync with global period when it changes
+  useEffect(() => { setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { setDateTo(periodTo); }, [periodTo]);
 
   const [reportData, setReportData] = useState<ProfitLossData>({
     leftTrading: [],
@@ -115,11 +115,6 @@ const ProfitLossReport = () => {
     grossLoss: 0,
     netProfit: 0,
   });
-
-  useEffect(() => {
-    localStorage.setItem('profitLoss_dateFrom', dateFrom);
-    localStorage.setItem('profitLoss_dateTo', dateTo);
-  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     if (selectedCompany && dateFrom && dateTo) {
@@ -452,6 +447,10 @@ const ProfitLossReport = () => {
 
   const openGroupSummary = (groupId: string) => {
     if (!groupId) return;
+    if (!can('report_groupsummary')) {
+      setNoAccessMsg('No access to "Group Summary Report"');
+      return;
+    }
     const normalizedDateFrom = dateFrom <= dateTo ? dateFrom : dateTo;
     const normalizedDateTo = dateFrom <= dateTo ? dateTo : dateFrom;
     navigate(`/reports/group-summary?groupId=${encodeURIComponent(groupId)}&dateFrom=${encodeURIComponent(normalizedDateFrom)}&dateTo=${encodeURIComponent(normalizedDateTo)}`);
@@ -505,6 +504,12 @@ const ProfitLossReport = () => {
 
   return (
     <div className="bg-background h-screen flex flex-col overflow-hidden">
+      {noAccessMsg && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-destructive text-white px-6 py-3 rounded shadow-lg">
+          {noAccessMsg}
+          <button className="ml-4 underline" onClick={() => setNoAccessMsg(null)}>Dismiss</button>
+        </div>
+      )}
       <div className="flex-shrink-0 bg-background border-b shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center">

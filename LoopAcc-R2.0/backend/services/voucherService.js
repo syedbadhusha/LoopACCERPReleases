@@ -1,6 +1,29 @@
 import { getDb } from "../db.js";
 import { v4 as uuidv4 } from "uuid";
 
+/**
+ * Update company's last_voucher_date only if the given date is strictly greater
+ * than the currently stored value. This ensures the highest voucher date is kept.
+ */
+async function updateCompanyLastVoucherDate(companyId, voucherDate) {
+  if (!companyId || !voucherDate) return;
+  try {
+    const db = getDb();
+    const company = await db.collection("companies").findOne({ id: String(companyId) });
+    if (!company) return;
+    const current = company.last_voucher_date || "";
+    // String compare works for ISO dates (YYYY-MM-DD)
+    if (String(voucherDate) > current) {
+      await db.collection("companies").updateOne(
+        { id: String(companyId) },
+        { $set: { last_voucher_date: String(voucherDate), updated_at: new Date() } }
+      );
+    }
+  } catch (err) {
+    console.error("[updateCompanyLastVoucherDate] Error:", err.message);
+  }
+}
+
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -1541,7 +1564,7 @@ export async function createVoucherWithDetails(payload) {
   // Ensure voucher_number is unique (case-insensitive) within this voucher type.
   // If the proposed number is already taken (two instances submitted simultaneously),
   // auto-increment to the next available number instead of failing.
-  if (voucher.voucher_number && voucher.voucher_type_id && !voucher.optional) {
+  if (voucher.voucher_number && voucher.voucher_type_id) {
     const vt = await db.collection("voucher_types").findOne({
       id: String(voucher.voucher_type_id),
       company_id: String(voucher.company_id),
@@ -2041,6 +2064,9 @@ export async function createVoucherWithDetails(payload) {
       ledgerBalanceError.message,
     );
   }
+
+  // Update company's last voucher date (only if this date is the highest)
+  await updateCompanyLastVoucherDate(voucher.company_id, voucher.voucher_date);
 
   if (completeVoucher) {
     console.log(
@@ -2611,6 +2637,9 @@ export async function updateVoucherWithDetails(id, payload) {
       ledgerBalanceError.message,
     );
   }
+
+  // Update company's last voucher date (only if this date is the highest)
+  await updateCompanyLastVoucherDate(updatedVoucher.company_id, updatedVoucher.voucher_date);
 
   if (completeVoucher) {
     console.log(

@@ -55,7 +55,7 @@ const Settings = () => {
     if (!selectedCompany) return;
 
     try {
-      const resp = await fetch(`http://localhost:5000/api/settings?companyId=${selectedCompany.id}`);
+      const resp = await fetch(`${API_BASE_URL}/settings?companyId=${selectedCompany.id}`);
       if (!resp.ok) throw new Error('Failed to fetch settings');
       
       const json = await resp.json();
@@ -87,7 +87,7 @@ const Settings = () => {
     if (!selectedCompany) return;
 
     try {
-      const resp = await fetch(`http://localhost:5000/api/settings`, {
+      const resp = await fetch(`${API_BASE_URL}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -144,7 +144,7 @@ const Settings = () => {
         setting_type: 'string'
       }));
 
-      const resp = await fetch(`http://localhost:5000/api/settings/batch`, {
+      const resp = await fetch(`${API_BASE_URL}/settings/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -316,7 +316,7 @@ const Settings = () => {
                     checked={settings.enable_bills !== 'false'}
                     onCheckedChange={async (checked) => {
                       if (!checked && selectedCompany) {
-                        const resp = await fetch(`http://localhost:5000/api/bills/has-bills?companyId=${selectedCompany.id}`);
+                        const resp = await fetch(`${API_BASE_URL}/bills/has-bills?companyId=${selectedCompany.id}`);
                         const json = await resp.json();
                         if (json.hasBills) {
                           toast({ title: 'Cannot disable', description: `${json.count} bill(s) already exist. Delete all bills before disabling.`, variant: 'destructive' });
@@ -337,7 +337,7 @@ const Settings = () => {
                     checked={settings.enable_batches !== 'false'}
                     onCheckedChange={async (checked) => {
                       if (!checked && selectedCompany) {
-                        const resp = await fetch(`http://localhost:5000/api/batch-allocations/has-batches?companyId=${selectedCompany.id}`);
+                        const resp = await fetch(`${API_BASE_URL}/batch-allocations/has-batches?companyId=${selectedCompany.id}`);
                         const json = await resp.json();
                         if (json.hasBatches) {
                           toast({ title: 'Cannot disable', description: `${json.count} batch record(s) already exist. Delete all batch records before disabling.`, variant: 'destructive' });

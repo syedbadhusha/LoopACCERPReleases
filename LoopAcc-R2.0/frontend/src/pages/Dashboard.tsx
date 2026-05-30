@@ -2,18 +2,24 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
+import { usePermissions } from '@/contexts/PermissionContext';
+import { useCallback } from 'react';
 import { isCompanyBillsEnabled, isCompanyBatchesEnabled, isCompanyPOSEnabled } from '@/lib/companyTax';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import SalesChart from '@/components/dashboard/SalesChart';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { API_BASE_URL } from '@/config/runtime';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { 
   BookOpen, 
@@ -31,14 +37,82 @@ import {
   Subtitles,
   Wallet,
   PauseCircle,
+  Calendar,
+  CalendarDays,
 } from 'lucide-react';
 
 const Dashboard = () => {
   const { user, signOut } = useAuth();
-  const { selectedCompany, logoutFromCompany } = useCompany();
+  const { selectedCompany, currentUser,logoutFromCompany, periodFrom, periodTo, setPeriod, currentDate, setCurrentDate } = useCompany();
+  const { can, canVoucher, isAdmin, voucher_permissions, refreshPermissions } = usePermissions();
+    // Always refresh permissions on mount to avoid stale role/permission data
+    useEffect(() => {
+      refreshPermissions();
+    }, [refreshPermissions]);
+  // Fetch voucher types for POS/non-POS logic
+  const [voucherTypes, setVoucherTypes] = useState([]);
+  useEffect(() => {
+    if (!selectedCompany) return;
+    fetch(`${API_BASE_URL}/voucher-types?companyId=${selectedCompany.id}`)
+      .then((r) => r.json())
+      .then((json) => setVoucherTypes(json.data || []))
+      .catch(() => setVoucherTypes([]));
+  }, [selectedCompany]);
+
+  // Helper to get is_pos for a voucher type id
+  const isPosVoucherType = (typeId) => {
+    const vt = voucherTypes.find((v) => v.id === typeId);
+    return vt && vt.is_pos;
+  };
+  // Track if user has create access to any non-POS voucher type (by is_pos)
+  const hasVoucherCreate = Object.entries(voucher_permissions || {}).some(
+    ([typeId, vp]) => vp.create && !isPosVoucherType(typeId)
+  );
+  // Track if user has create access to any POS voucher type (by is_pos)
+  const hasPOSVoucherCreate = Object.entries(voucher_permissions || {}).some(
+    ([typeId, vp]) => vp.create && isPosVoucherType(typeId)
+  );
   const navigate = useNavigate();
   const { toast } = useToast();
-  
+
+  // Period dialog
+  const [periodDialogOpen, setPeriodDialogOpen] = useState(false);
+  const [tempFrom, setTempFrom] = useState(periodFrom);
+  const [tempTo, setTempTo] = useState(periodTo);
+
+  // Current date dialog
+  const [dateDialogOpen, setDateDialogOpen] = useState(false);
+  const [tempCurrentDate, setTempCurrentDate] = useState(currentDate);
+
+  const openPeriodDialog = () => {
+    setTempFrom(periodFrom);
+    setTempTo(periodTo);
+    setPeriodDialogOpen(true);
+  };
+
+  const applyPeriod = () => {
+    if (tempFrom && tempTo && tempFrom <= tempTo) {
+      setPeriod(tempFrom, tempTo);
+      setPeriodDialogOpen(false);
+    } else {
+      toast({ title: 'Invalid period', description: 'From date must be before To date.', variant: 'destructive' });
+    }
+  };
+
+  const openDateDialog = () => {
+    setTempCurrentDate(currentDate);
+    setDateDialogOpen(true);
+  };
+
+  const applyCurrentDate = () => {
+    if (tempCurrentDate && tempCurrentDate >= periodFrom && tempCurrentDate <= periodTo) {
+      setCurrentDate(tempCurrentDate);
+      setDateDialogOpen(false);
+    } else {
+      toast({ title: 'Invalid date', description: `Date must be within the current period (${periodFrom} to ${periodTo}).`, variant: 'destructive' });
+    }
+  };
+
   const [stats, setStats] = useState({
     totalSales: 0,
     totalPurchase: 0,
@@ -63,7 +137,7 @@ const Dashboard = () => {
     setHoldLoading(true);
     setHoldBillsOpen(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/vouchers/report/held-pos?companyId=${selectedCompany.id}`);
+      const res = await fetch(`${API_BASE_URL}/vouchers/report/held-pos?companyId=${selectedCompany.id}`);
       const json = await res.json();
       setHoldVouchers(json.data || []);
     } catch {
@@ -91,7 +165,7 @@ const Dashboard = () => {
       try {
         // Fetch outstanding receivables from the actual report endpoint
         const receivablesResp = await fetch(
-          `http://localhost:5000/api/vouchers/report/outstanding-receivables?companyId=${selectedCompany.id}`
+          `${API_BASE_URL}/vouchers/report/outstanding-receivables?companyId=${selectedCompany.id}`
         );
         const receivablesJson = await receivablesResp.json();
         const receivablesData = receivablesJson?.data || [];
@@ -102,7 +176,7 @@ const Dashboard = () => {
 
         // Fetch outstanding payables from the actual report endpoint
         const payablesResp = await fetch(
-          `http://localhost:5000/api/vouchers/report/outstanding-payables?companyId=${selectedCompany.id}`
+          `${API_BASE_URL}/vouchers/report/outstanding-payables?companyId=${selectedCompany.id}`
         );
         const payablesJson = await payablesResp.json();
         const payablesData = payablesJson?.data || [];
@@ -111,8 +185,10 @@ const Dashboard = () => {
           0
         );
 
-        // Fetch all vouchers for sales and purchase totals
-        const resp = await fetch(`http://localhost:5000/api/vouchers?companyId=${selectedCompany.id}`);
+        // Fetch vouchers filtered by current period for sales and purchase totals
+        const resp = await fetch(
+          `${API_BASE_URL}/vouchers?companyId=${selectedCompany.id}&dateFrom=${periodFrom}&dateTo=${periodTo}`
+        );
         const json = await resp.json();
         const allVouchers = json?.data || [];
 
@@ -124,7 +200,7 @@ const Dashboard = () => {
         const totalPurchase = purchaseData.reduce((sum: number, v: any) => sum + Number(v.net_amount || 0), 0);
 
         // Fetch groups to get Cash-in-Hand / Bank Accounts IDs
-        const groupsResp = await fetch(`http://localhost:5000/api/groups?companyId=${selectedCompany.id}`);
+        const groupsResp = await fetch(`${API_BASE_URL}/groups?companyId=${selectedCompany.id}`);
         const groupsJson = await groupsResp.json();
         const allGroups: any[] = groupsJson?.data || [];
         const cashGroup = allGroups.find((g: any) => g.name === 'Cash-in-Hand');
@@ -133,7 +209,7 @@ const Dashboard = () => {
         // Fetch current-date balance for cash/bank (all-time: opening + all transactions up to today)
         const fyTo = new Date().toISOString().slice(0, 10);
         const bsParams = new URLSearchParams({ companyId: selectedCompany.id, dateFrom: '1900-01-01', dateTo: fyTo });
-        const bsResp = await fetch(`http://localhost:5000/api/ledgers/report/balance-sheet?${bsParams}`);
+        const bsResp = await fetch(`${API_BASE_URL}/ledgers/report/balance-sheet?${bsParams}`);
         const bsJson = await bsResp.json();
         const allLedgers: any[] = bsJson?.data || [];
         // opening is the master opening balance (signed); debit/credit are all-time transaction movements
@@ -161,88 +237,114 @@ const Dashboard = () => {
     };
 
     fetchStats();
-  }, [selectedCompany]);
+  }, [selectedCompany, periodFrom, periodTo]);
 
+  // ...existing code...
+
+  // Dashboard menuItems (unchanged, but POS removed)
+  type PermissionKey = Parameters<typeof can>[0];
   const menuItems = [
     { 
- title: 'Masters', 
-    subSections: [
-      {
-        subTitle: 'Accounting Masters',
-        items: [
-          { name: 'Group Master', icon: BookOpen, path: '/groups' },
-          { name: 'Ledger Master', icon: BookOpen, path: '/ledger-master' },
-          { name: 'Voucher Type Master', icon: FileText, path: '/voucher-types' },
-        ]
-      },
-      {
-        subTitle: 'Inventory Masters',
-        items: [
-          { name: 'Stock Group Master', icon: Package, path: '/stock-group-master' },
-          { name: 'Stock Category Master', icon: Package, path: '/stock-category-master' },
-          { name: 'Item Master', icon: Package, path: '/item-master' },
-          { name: 'UOM Master', icon: Users, path: '/uom-master' },
-        ]
-      }
-    ]
+      title: 'Masters', 
+      subSections: [
+        {
+          subTitle: 'Accounting Masters',
+          items: [
+            { name: 'Group Master', icon: BookOpen, path: '/groups', permkey: 'master_group_view' as PermissionKey },
+            { name: 'Ledger Master', icon: BookOpen, path: '/ledger-master', permkey: 'master_ledger_view' as PermissionKey },
+            { name: 'Voucher Type Master', icon: FileText, path: '/voucher-types', permkey: 'master_vouchertype_view' as PermissionKey },
+          ]
+        },
+        {
+          subTitle: 'Inventory Masters',
+          items: [
+            { name: 'Stock Group Master', icon: Package, path: '/stock-group-master', permkey: 'master_stockgroup_view' as PermissionKey },
+            { name: 'Stock Category Master', icon: Package, path: '/stock-category-master', permkey: 'master_stockcategory_view' as PermissionKey },
+            { name: 'Item Master', icon: Package, path: '/item-master', permkey: 'master_item_view' as PermissionKey },
+            { name: 'UOM Master', icon: Users, path: '/uom-master', permkey: 'master_uom_view' as PermissionKey },
+          ]
+        }
+      ]
     },
     {
       title: 'Transactions',
       items: [
-        { name: 'Vouchers', icon: FileText, path: '/vouchers' },
-        ...(posEnabled ? [{ name: 'POS', icon: ShoppingCart, path: '/pos' }] : []),
+        ...(hasVoucherCreate ? [{ name: 'Vouchers', icon: FileText, path: '/vouchers', permkey: null }] : []),
+        // Show POS menu only if POS is enabled for the company AND user has create access to a POS voucher type
+        ...(posEnabled && hasPOSVoucherCreate ? [{ name: 'POS', icon: FileText, path: '/pos', permkey: null }] : []),
       ]
     },
     {
       title: 'Reports',
       items: [
-        { name: 'Profit & Loss', icon: BarChart3, path: '/reports/profit-loss' },
-        { name: 'Balance Sheet', icon: FileText, path: '/reports/balance-sheet' },
-        { name: 'Trial Balance', icon: FileText, path: '/reports/trial-balance' },
-        { name: 'Group Summary', icon: FileText, path: '/reports/group-summary' },
-        { name: 'Ledger Report', icon: BookOpen, path: '/reports/ledger' },
-        { name: 'Group Vouchers', icon: BookOpen, path: '/reports/group-vouchers' },
-        { name: 'Voucher History',icon: BookOpen,path: '/reports/voucher-history' },
-        { name: 'Sales Register',icon: BookOpen,path: '/reports/sales-register' },
-        { name: 'Purchase Register',icon: BookOpen,path: '/reports/purchase-register' },
-        { name: 'Stock Summary',icon: BookOpen,path: '/reports/stock-summary' },
-        ...(batchesEnabled ? [{ name: 'Batch Summary',icon: BookOpen,path: '/reports/batch-summary' }] : []),
+        { name: 'Profit & Loss', icon: BarChart3, path: '/reports/profit-loss', permkey: 'report_profitloss' as PermissionKey },
+        { name: 'Balance Sheet', icon: FileText, path: '/reports/balance-sheet', permkey: 'report_balancesheet' as PermissionKey },
+        { name: 'Trial Balance', icon: FileText, path: '/reports/trial-balance', permkey: 'report_trialbalance' as PermissionKey },
+        { name: 'Group Summary', icon: FileText, path: '/reports/group-summary', permkey: 'report_groupsummary' as PermissionKey },
+        { name: 'Ledger Report', icon: BookOpen, path: '/reports/ledger', permkey: 'report_ledger' as PermissionKey },
+        { name: 'Group Vouchers', icon: BookOpen, path: '/reports/group-vouchers', permkey: 'report_groupvouchers' as PermissionKey },
+        { name: 'Voucher History',icon: BookOpen,path: '/reports/voucher-history', permkey: 'report_voucherhistory' as PermissionKey },
+        { name: 'Sales Register',icon: BookOpen,path: '/reports/sales-register', permkey: 'report_salesregister' as PermissionKey },
+        { name: 'Purchase Register',icon: BookOpen,path: '/reports/purchase-register', permkey: 'report_purchaseregister' as PermissionKey },
+        { name: 'Stock Summary',icon: BookOpen,path: '/reports/stock-summary', permkey: 'report_stocksummary' as PermissionKey },
+        { name: 'Outstanding Receivables', icon: CreditCard, path: '/reports/outstanding-receivable', permkey: 'report_outstanding_receivable' as PermissionKey },
+        { name: 'Outstanding Payables', icon: CreditCard, path: '/reports/outstanding-payable', permkey: 'report_outstanding_payable' as PermissionKey },
+        ...(batchesEnabled ? [{ name: 'Batch Summary',icon: BookOpen,path: '/reports/batch-summary', permkey: 'report_batchsummary' as PermissionKey }] : []),
       ]
     }
   ];
 
+  // Dashboard quick stats with permission checks
+  const safeNumber = (val: any) => (typeof val === 'number' && !isNaN(val) ? val : 0);
   const quickStats = [
-    { title: 'Total Sales', value: `${currencySymbol} ${stats.totalSales.toFixed(2)}`, color: 'text-green-600', path: '/reports/sales-register' },
-    { title: 'Total Purchase', value: `${currencySymbol} ${stats.totalPurchase.toFixed(2)}`, color: 'text-red-600', path: '/reports/purchase-register' },
+    can('dashboard_total_sales') && { title: 'Total Sales', value: `${currencySymbol} ${safeNumber(stats.totalSales).toFixed(2)}`, color: 'text-green-600', path: '/reports/sales-register' },
+    can('dashboard_total_purchase') && { title: 'Total Purchase', value: `${currencySymbol} ${safeNumber(stats.totalPurchase).toFixed(2)}`, color: 'text-red-600', path: '/reports/purchase-register' },
     ...(billsEnabled ? [
-      { title: 'Outstanding Receivables', value: `${currencySymbol} ${stats.outstandingReceivables.toFixed(2)}`, color: 'text-blue-600', path: '/reports/outstanding-receivable' },
-      { title: 'Outstanding Payables', value: `${currencySymbol} ${stats.outstandingPayables.toFixed(2)}`, color: 'text-orange-600', path: '/reports/outstanding-payable' },
+      can('dashboard_outstanding_receivable') && { title: 'Outstanding Receivables', value: `${currencySymbol} ${safeNumber(stats.outstandingReceivables).toFixed(2)}`, color: 'text-blue-600', path: '/reports/outstanding-receivable' },
+      can('dashboard_outstanding_payable') && { title: 'Outstanding Payables', value: `${currencySymbol} ${safeNumber(stats.outstandingPayables).toFixed(2)}`, color: 'text-orange-600', path: '/reports/outstanding-payable' },
     ] : []),
-  ];
+  ].filter(Boolean);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
       {/* Header */}
       <header className="flex-shrink-0 border-b bg-card shadow-sm">
-        <div className="flex h-16 items-center justify-between px-6">
+        <p className="flex h-18 items-center justify-between px-6">{selectedCompany?.name}</p>
+        <div className="flex h-18 items-center justify-between px-6">
           <div className="flex items-center space-x-4">
             <Building2 className="h-8 w-8 text-primary" />
             <div>
               <h1 className="text-lg font-semibold text-foreground">LoopAcc</h1>
-              <p className="text-sm text-muted-foreground">{selectedCompany?.name}</p>
             </div>
           </div>
-          
           <div className="flex items-center space-x-4">
-            <Button variant="outline" size="sm" onClick={() => navigate('/company-profile')}>
+            <Button variant="outline" size="sm" onClick={openDateDialog}>
+              <CalendarDays className="mr-2 h-4 w-4" />
+              {currentDate}
+            </Button>
+            <Button variant="outline" size="sm" onClick={openPeriodDialog}>
+              <Calendar className="mr-2 h-4 w-4" />
+              {periodFrom} → {periodTo}
+            </Button>
+            {currentUser?.is_admin && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => navigate('/company-profile')}
+              disabled={!currentUser?.is_admin}
+              title={!currentUser?.is_admin ? 'Only company admin can access profile' : ''}
+            >
               <Building2 className="mr-2 h-4 w-4" />
               Company Profile
-            </Button>
+            </Button>)}
             <Button variant="outline" size="sm" onClick={() => navigate('/settings')}>
               <Settings className="mr-2 h-4 w-4" />
               Settings
             </Button>
-            <Badge variant="secondary">{user?.email}</Badge>
+            {/* <Badge variant="secondary">{user?.email}</Badge> */}
+            <div>
+              <h1 className="text-lg font-semibold text-foreground">{(currentUser?.username)?.toLocaleUpperCase()}</h1>
+            </div>
             <Button 
               variant="outline" 
               size="sm" 
@@ -250,18 +352,30 @@ const Dashboard = () => {
               className="text-destructive hover:bg-destructive/10"
             >
               <LogOut className="mr-2 h-4 w-4" />
-              Logout from Company
+              Logout Company
             </Button>
           </div>
         </div>
       </header>
-
-      <div className="flex flex-1 overflow-hidden">
+       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside className="w-64 border-r bg-card overflow-y-auto">
           <div className="p-4">
             <h2 className="text-lg font-semibold mb-4 text-foreground">Menu</h2>
             <nav className="space-y-6">
+              {/* Admin-only: User Management */}
+              {isAdmin && (
+                <div className="mb-2">
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start text-left h-auto py-2 text-primary"
+                    onClick={() => navigate('/company-user-management')}
+                  >
+                    <Users className="mr-3 h-4 w-4" />
+                    User Management
+                  </Button>
+                </div>
+              )}
               {menuItems.map((section, sectionIndex) => (
                 <div key={sectionIndex} className="mb-6">
                   <h3 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">
@@ -269,28 +383,32 @@ const Dashboard = () => {
                   </h3>
                   {/* Check if section has subSections */}
                   {section.subSections ? (
-                    section.subSections.map((sub, subIndex) => (
-                      <div key={subIndex} className="mb-3">
-                        <h4 className="text-xs font-medium text-foreground/70 mb-1">{sub.subTitle}</h4>
-                        <ul className="space-y-1">
-                          {sub.items.map((item, itemIndex) => (
-                            <li key={itemIndex}>
-                              <Button
-                                variant="ghost"
-                                className="w-full justify-start text-left h-auto py-2"
-                                onClick={() => navigate(item.path)}
-                              >
-                                <item.icon className="mr-3 h-4 w-4" />
-                                {item.name}
-                              </Button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))
+                    section.subSections.map((sub, subIndex) => {
+                      const visibleItems = sub.items.filter((item) => can(item.permkey as PermissionKey));
+                      if (visibleItems.length === 0) return null;
+                      return (
+                        <div key={subIndex} className="mb-3">
+                          <h4 className="text-xs font-medium text-foreground/70 mb-1">{sub.subTitle}</h4>
+                          <ul className="space-y-1">
+                            {visibleItems.map((item, itemIndex) => (
+                              <li key={itemIndex}>
+                                <Button
+                                  variant="ghost"
+                                  className="w-full justify-start text-left h-auto py-2"
+                                  onClick={() => navigate(item.path)}
+                                >
+                                  <item.icon className="mr-3 h-4 w-4" />
+                                  {item.name}
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })
                   ) : (
                     <ul className="space-y-1">
-                      {section.items.map((item, itemIndex) => (
+                      {section.items.filter((item) => item.permkey === null || can(item.permkey as PermissionKey)).map((item, itemIndex) => (
                         <li key={itemIndex}>
                           <Button
                             variant="ghost"
@@ -319,7 +437,7 @@ const Dashboard = () => {
             </p>
           </div>
 
-          {/* Quick Stats */}
+          {/* Quick Stats (top buttons) */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-4">
             {quickStats.map((stat, index) => (
               <Card 
@@ -337,8 +455,8 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             ))}
-            {/* Cash in Hand card */}
-            {stats.cashGroupId && (
+            {/* Cash in Hand card (permission) */}
+            {can('dashboard_cash_in_hand') && stats.cashGroupId && (
               <Card
                 className="cursor-pointer hover:shadow-md transition-shadow"
                 onClick={() => {
@@ -360,8 +478,8 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             )}
-            {/* Bank Accounts card */}
-            {stats.bankGroupId && (
+            {/* Bank Accounts card (permission) */}
+            {can('dashboard_bank_accounts') && stats.bankGroupId && (
               <Card
                 className="cursor-pointer hover:shadow-md transition-shadow"
                 onClick={() => {
@@ -383,8 +501,8 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             )}
-            {/* Hold Bills card — POS only */}
-            {posEnabled && (
+            {/* Hold Bills card — Dashboard permission */}
+            {can('dashboard_pos_hold') && posEnabled && (
               <Card
                 className="cursor-pointer hover:shadow-md transition-shadow border-amber-200"
                 onClick={openHoldBills}
@@ -405,95 +523,89 @@ const Dashboard = () => {
             )}
           </div>
 
-          {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <SalesChart />
-          </div>
+          {/* Bar Chart (SalesChart) with dashboard permission */}
+          {can('dashboard_bar_chart') && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+              <SalesChart />
+            </div>
+          )}
 
-          {/* Quick Actions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=sales')}>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Plus className="mr-2 h-5 w-5" />
-                  Create Sales Invoice
-                </CardTitle>
-                <CardDescription>
-                  Create a new sales invoice for your customers
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=purchase')}>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Plus className="mr-2 h-5 w-5" />
-                  Create Purchase Invoice
-                </CardTitle>
-                <CardDescription>
-                  Record purchases from your suppliers
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=payment')}>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <CreditCard className="mr-2 h-5 w-5" />
-                  Payment Entry
-                </CardTitle>
-                <CardDescription>
-                  Record payment transactions
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/vouchers?type=receipt')}>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Receipt className="mr-2 h-5 w-5" />
-                  Receipt Entry
-                </CardTitle>
-                <CardDescription>
-                  Record receipt transactions
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/ledger-master')}>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Users className="mr-2 h-5 w-5" />
-                  Ledger Master
-                </CardTitle>
-                <CardDescription>
-                  Manage your ledger accounts
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/item-master')}>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Package className="mr-2 h-5 w-5" />
-                  Item Master
-                </CardTitle>
-                <CardDescription>
-                  Manage your inventory items and stock
-                </CardDescription>
-              </CardHeader>
-            </Card>
-          </div>
+          {/* Quick Actions removed as requested */}
         </main>
       </div>
 
+      {/* Change Current Date Dialog */}
+      <Dialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4" /> Change Current Date
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="current-date">Current Date</Label>
+            <Input
+              id="current-date"
+              type="date"
+              value={tempCurrentDate}
+              min={periodFrom}
+              max={periodTo}
+              onChange={(e) => setTempCurrentDate(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">Must be within {periodFrom} to {periodTo}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDateDialogOpen(false)}>Cancel</Button>
+            <Button onClick={applyCurrentDate}>Apply</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Change Period Dialog */}
+      <Dialog open={periodDialogOpen} onOpenChange={setPeriodDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="h-4 w-4" /> Change Period
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="period-from">From Date</Label>
+              <Input
+                id="period-from"
+                type="date"
+                value={tempFrom}
+                onChange={(e) => setTempFrom(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="period-to">To Date</Label>
+              <Input
+                id="period-to"
+                type="date"
+                value={tempTo}
+                onChange={(e) => setTempTo(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPeriodDialogOpen(false)}>Cancel</Button>
+            <Button onClick={applyPeriod}>Apply</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Hold Bills Dialog */}
       <Dialog open={holdBillsOpen} onOpenChange={setHoldBillsOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent aria-describedby={undefined} className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <PauseCircle className="h-4 w-4 text-amber-500" /> Hold Bills
             </DialogTitle>
+            <DialogDescription>
+              List of all held (on-hold) POS bills for this company. Select a bill to retake or settle.
+            </DialogDescription>
           </DialogHeader>
           {holdLoading ? (
             <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>

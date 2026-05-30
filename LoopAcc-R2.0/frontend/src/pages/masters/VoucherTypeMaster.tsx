@@ -18,7 +18,9 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
+  
 } from '@/components/ui/dialog';
 import {
   Table,
@@ -29,6 +31,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ArrowLeft, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Eye } from 'lucide-react';
+import { usePermissions } from '@/contexts/PermissionContext';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 import { isCompanyPOSEnabled, getCompanyTaxType, isCompanyTaxEnabled } from '@/lib/companyTax';
@@ -103,6 +107,7 @@ const EMPTY_FORM = {
 };
 
 const VoucherTypeMaster = () => {
+    const { can } = usePermissions();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { selectedCompany } = useCompany();
@@ -118,6 +123,7 @@ const VoucherTypeMaster = () => {
   const [quickLedgerOpen, setQuickLedgerOpen] = useState(false);
   const [quickLedgerTarget, setQuickLedgerTarget] = useState('');
   const [quickLedgerDefaultGroup, setQuickLedgerDefaultGroup] = useState('');
+  const [viewOnly, setViewOnly] = useState(false);
   const posEnabled = isCompanyPOSEnabled(selectedCompany);
   const taxType = getCompanyTaxType(selectedCompany);
   const isTaxEnabled = isCompanyTaxEnabled(selectedCompany);
@@ -160,9 +166,10 @@ const VoucherTypeMaster = () => {
     setDialogOpen(true);
   };
 
-  const openEdit = (vt: VoucherType) => {
+  const openEdit = (vt: VoucherType, opts?: { viewOnly?: boolean }) => {
     setEditingId(vt.id);
     setHasVouchersForEditing(false);
+    setViewOnly(!!opts?.viewOnly);
     if (selectedCompany) {
       fetch(`${API_BASE_URL}/vouchers/has-pos-vouchers?companyId=${selectedCompany.id}&voucherTypeId=${vt.id}`)
         .then(r => r.json())
@@ -416,15 +423,27 @@ const VoucherTypeMaster = () => {
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => openEdit(vt)}
-                                  title="Edit"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                                {!vt.is_system && (
+                                {can && can('master_vouchertype_view') && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openEdit(vt, { viewOnly: true })}
+                                    title="View"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {can && can('master_vouchertype_edit') && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openEdit(vt)}
+                                    title="Edit"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {can && can('master_vouchertype_delete') && !vt.is_system && (
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -452,11 +471,16 @@ const VoucherTypeMaster = () => {
 
       {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className={form.is_pos ? 'max-w-3xl flex flex-col max-h-[90vh]' : 'max-w-lg flex flex-col max-h-[90vh]'}>
+        <DialogContent aria-description="undefined" className={form.is_pos ? 'max-w-3xl flex flex-col max-h-[90vh]' : 'max-w-lg flex flex-col max-h-[90vh]'}>
           <DialogHeader className="flex-shrink-0">
             <DialogTitle>
-              {editingId ? 'Edit Voucher Type' : 'New Voucher Type'}
+              {viewOnly
+                ? 'View Voucher Type'
+                : editingId
+                  ? 'Edit Voucher Type'
+                  : 'New Voucher Type'}
             </DialogTitle>
+            <DialogDescription>Fill all required voucher type details and save.</DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto min-h-0 pr-1">
@@ -469,7 +493,8 @@ const VoucherTypeMaster = () => {
                 value={form.name}
                 onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                 placeholder="e.g. Export Sales Invoice"
-                disabled={isEditingSystemType}
+                disabled={isEditingSystemType || viewOnly}
+                readOnly={viewOnly}
               />
               {isEditingSystemType && (
                 <p className="text-xs text-muted-foreground mt-1">
@@ -501,9 +526,9 @@ const VoucherTypeMaster = () => {
                       }),
                     }));
                   }}
-                  disabled={!!(editingId && hasVouchersForEditing)}
+                  disabled={!!(editingId && hasVouchersForEditing) || viewOnly}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger disabled={viewOnly}>
                     <SelectValue placeholder="Select under" />
                   </SelectTrigger>
                   <SelectContent>
@@ -548,6 +573,8 @@ const VoucherTypeMaster = () => {
                 value={form.prefix}
                 onChange={(e) => setForm((p) => ({ ...p, prefix: e.target.value }))}
                 placeholder="e.g. INV-"
+                disabled={viewOnly}
+                readOnly={viewOnly}
               />
             </div>
 
@@ -557,6 +584,8 @@ const VoucherTypeMaster = () => {
                 value={form.suffix}
                 onChange={(e) => setForm((p) => ({ ...p, suffix: e.target.value }))}
                 placeholder="e.g. /24-25"
+                disabled={viewOnly}
+                readOnly={viewOnly}
               />
             </div>
 
@@ -568,6 +597,8 @@ const VoucherTypeMaster = () => {
                 value={form.starting_number}
                 onChange={(e) => setForm((p) => ({ ...p, starting_number: e.target.value }))}
                 placeholder="1"
+                disabled={viewOnly}
+                readOnly={viewOnly}
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Preview: {form.prefix || ''}{(parseInt(form.starting_number) || 1).toString().padStart(4, '0')}{form.suffix || ''}
@@ -585,6 +616,7 @@ const VoucherTypeMaster = () => {
               <Switch
                 checked={form.print_after_save}
                 onCheckedChange={(v) => setForm((p) => ({ ...p, print_after_save: v }))}
+                disabled={viewOnly}
               />
             </div>
 
@@ -595,6 +627,8 @@ const VoucherTypeMaster = () => {
                 value={form.print_title}
                 onChange={(e) => setForm((p) => ({ ...p, print_title: e.target.value }))}
                 placeholder={['sales','credit-note'].includes(form.base_type || voucherTypes.find(v => v.id === editingId)?.base_type || '') ? 'e.g. Tax Invoice' : 'e.g. Purchase Order'}
+                disabled={viewOnly}
+                readOnly={viewOnly}
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Heading shown on top of the printed document. Leave blank for the default.
@@ -616,6 +650,7 @@ const VoucherTypeMaster = () => {
                   <Switch
                     checked={form.is_pos}
                     onCheckedChange={(v) => setForm((p) => ({ ...p, is_pos: v }))}
+                    disabled={viewOnly}
                   />
                 </div>
               </>
@@ -635,14 +670,17 @@ const VoucherTypeMaster = () => {
                     <Select
                       value={form.pos_sales_ledger_id}
                       onValueChange={(v) => setForm((p) => ({ ...p, pos_sales_ledger_id: v === '__none__' ? '' : v }))}
+                      disabled={viewOnly}
                     >
-                      <SelectTrigger className="h-8 text-sm flex-1"><SelectValue placeholder="Select ledger" /></SelectTrigger>
+                      <SelectTrigger className="h-8 text-sm flex-1" disabled={viewOnly}><SelectValue placeholder="Select ledger" /></SelectTrigger>
                       <SelectContent>
                         {ledgers.map(l => <SelectItem key={l.id} value={l.id}>{l.name}{l.group_name ? ` (${l.group_name})` : ''}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Create new ledger"
-                      onClick={() => { setQuickLedgerTarget('pos_sales_ledger_id'); setQuickLedgerDefaultGroup('Sales Accounts'); setQuickLedgerOpen(true); }}>
+                      onClick={() => { setQuickLedgerTarget('pos_sales_ledger_id'); setQuickLedgerDefaultGroup('Sales Accounts'); setQuickLedgerOpen(true); }}
+                      disabled={viewOnly}
+                    >
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>
@@ -656,14 +694,17 @@ const VoucherTypeMaster = () => {
                     <Select
                       value={form.pos_cash_ledger_id || '__none__'}
                       onValueChange={(v) => setForm((p) => ({ ...p, pos_cash_ledger_id: v === '__none__' ? '' : v }))}
+                      disabled={viewOnly}
                     >
-                      <SelectTrigger className={`h-8 text-sm flex-1 ${!form.pos_cash_ledger_id ? 'border-destructive' : ''}`}><SelectValue placeholder="Select ledger" /></SelectTrigger>
+                      <SelectTrigger className={`h-8 text-sm flex-1 ${!form.pos_cash_ledger_id ? 'border-destructive' : ''}`} disabled={viewOnly}><SelectValue placeholder="Select ledger" /></SelectTrigger>
                       <SelectContent>
                         {ledgers.map(l => <SelectItem key={l.id} value={l.id}>{l.name}{l.group_name ? ` (${l.group_name})` : ''}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Create new ledger"
-                      onClick={() => { setQuickLedgerTarget('pos_cash_ledger_id'); setQuickLedgerDefaultGroup('Cash-in-Hand'); setQuickLedgerOpen(true); }}>
+                      onClick={() => { setQuickLedgerTarget('pos_cash_ledger_id'); setQuickLedgerDefaultGroup('Cash-in-Hand'); setQuickLedgerOpen(true); }}
+                      disabled={viewOnly}
+                    >
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>
@@ -677,14 +718,17 @@ const VoucherTypeMaster = () => {
                     <Select
                       value={form.pos_card_ledger_id || '__none__'}
                       onValueChange={(v) => setForm((p) => ({ ...p, pos_card_ledger_id: v === '__none__' ? '' : v }))}
+                      disabled={viewOnly}
                     >
-                      <SelectTrigger className={`h-8 text-sm flex-1 ${!form.pos_card_ledger_id ? 'border-destructive' : ''}`}><SelectValue placeholder="Select ledger" /></SelectTrigger>
+                      <SelectTrigger className={`h-8 text-sm flex-1 ${!form.pos_card_ledger_id ? 'border-destructive' : ''}`} disabled={viewOnly}><SelectValue placeholder="Select ledger" /></SelectTrigger>
                       <SelectContent>
                         {ledgers.map(l => <SelectItem key={l.id} value={l.id}>{l.name}{l.group_name ? ` (${l.group_name})` : ''}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Create new ledger"
-                      onClick={() => { setQuickLedgerTarget('pos_card_ledger_id'); setQuickLedgerDefaultGroup('Bank Accounts'); setQuickLedgerOpen(true); }}>
+                      onClick={() => { setQuickLedgerTarget('pos_card_ledger_id'); setQuickLedgerDefaultGroup('Bank Accounts'); setQuickLedgerOpen(true); }}
+                      disabled={viewOnly}
+                    >
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>
@@ -698,14 +742,17 @@ const VoucherTypeMaster = () => {
                     <Select
                       value={form.pos_online_ledger_id || '__none__'}
                       onValueChange={(v) => setForm((p) => ({ ...p, pos_online_ledger_id: v === '__none__' ? '' : v }))}
+                      disabled={viewOnly}
                     >
-                      <SelectTrigger className={`h-8 text-sm flex-1 ${!form.pos_online_ledger_id ? 'border-destructive' : ''}`}><SelectValue placeholder="Select ledger" /></SelectTrigger>
+                      <SelectTrigger className={`h-8 text-sm flex-1 ${!form.pos_online_ledger_id ? 'border-destructive' : ''}`} disabled={viewOnly}><SelectValue placeholder="Select ledger" /></SelectTrigger>
                       <SelectContent>
                         {ledgers.map(l => <SelectItem key={l.id} value={l.id}>{l.name}{l.group_name ? ` (${l.group_name})` : ''}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Create new ledger"
-                      onClick={() => { setQuickLedgerTarget('pos_online_ledger_id'); setQuickLedgerDefaultGroup('Bank Accounts'); setQuickLedgerOpen(true); }}>
+                      onClick={() => { setQuickLedgerTarget('pos_online_ledger_id'); setQuickLedgerDefaultGroup('Bank Accounts'); setQuickLedgerOpen(true); }}
+                      disabled={viewOnly}
+                    >
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>
@@ -721,15 +768,18 @@ const VoucherTypeMaster = () => {
                         <Select
                           value={form.pos_cgst_ledger_id || '__none__'}
                           onValueChange={(v) => setForm((p) => ({ ...p, pos_cgst_ledger_id: v === '__none__' ? '' : v }))}
+                          disabled={viewOnly}
                         >
-                          <SelectTrigger className={`h-8 text-sm flex-1 ${isTaxEnabled && !form.pos_cgst_ledger_id ? 'border-destructive' : ''}`}><SelectValue placeholder="Select ledger" /></SelectTrigger>
+                          <SelectTrigger className={`h-8 text-sm flex-1 ${isTaxEnabled && !form.pos_cgst_ledger_id ? 'border-destructive' : ''}`} disabled={viewOnly}><SelectValue placeholder="Select ledger" /></SelectTrigger>
                           <SelectContent>
                             {!isTaxEnabled && <SelectItem value="__none__">— None —</SelectItem>}
                             {ledgers.map(l => <SelectItem key={l.id} value={l.id}>{l.name}{l.group_name ? ` (${l.group_name})` : ''}</SelectItem>)}
                           </SelectContent>
                         </Select>
                         <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Create new ledger"
-                          onClick={() => { setQuickLedgerTarget('pos_cgst_ledger_id'); setQuickLedgerDefaultGroup('Duties & Taxes'); setQuickLedgerOpen(true); }}>
+                          onClick={() => { setQuickLedgerTarget('pos_cgst_ledger_id'); setQuickLedgerDefaultGroup('Duties & Taxes'); setQuickLedgerOpen(true); }}
+                          disabled={viewOnly}
+                        >
                           <Plus className="h-3 w-3" />
                         </Button>
                       </div>
@@ -741,15 +791,18 @@ const VoucherTypeMaster = () => {
                         <Select
                           value={form.pos_sgst_ledger_id || '__none__'}
                           onValueChange={(v) => setForm((p) => ({ ...p, pos_sgst_ledger_id: v === '__none__' ? '' : v }))}
+                          disabled={viewOnly}
                         >
-                          <SelectTrigger className={`h-8 text-sm flex-1 ${isTaxEnabled && !form.pos_sgst_ledger_id ? 'border-destructive' : ''}`}><SelectValue placeholder="Select ledger" /></SelectTrigger>
+                          <SelectTrigger className={`h-8 text-sm flex-1 ${isTaxEnabled && !form.pos_sgst_ledger_id ? 'border-destructive' : ''}`} disabled={viewOnly}><SelectValue placeholder="Select ledger" /></SelectTrigger>
                           <SelectContent>
                             {!isTaxEnabled && <SelectItem value="__none__">— None —</SelectItem>}
                             {ledgers.map(l => <SelectItem key={l.id} value={l.id}>{l.name}{l.group_name ? ` (${l.group_name})` : ''}</SelectItem>)}
                           </SelectContent>
                         </Select>
                         <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Create new ledger"
-                          onClick={() => { setQuickLedgerTarget('pos_sgst_ledger_id'); setQuickLedgerDefaultGroup('Duties & Taxes'); setQuickLedgerOpen(true); }}>
+                          onClick={() => { setQuickLedgerTarget('pos_sgst_ledger_id'); setQuickLedgerDefaultGroup('Duties & Taxes'); setQuickLedgerOpen(true); }}
+                          disabled={viewOnly}
+                        >
                           <Plus className="h-3 w-3" />
                         </Button>
                       </div>
@@ -763,15 +816,18 @@ const VoucherTypeMaster = () => {
                       <Select
                         value={form.pos_tax_ledger_id || '__none__'}
                         onValueChange={(v) => setForm((p) => ({ ...p, pos_tax_ledger_id: v === '__none__' ? '' : v }))}
+                        disabled={viewOnly}
                       >
-                        <SelectTrigger className={`h-8 text-sm flex-1 ${isTaxEnabled && !form.pos_tax_ledger_id ? 'border-destructive' : ''}`}><SelectValue placeholder="Select ledger" /></SelectTrigger>
+                        <SelectTrigger className={`h-8 text-sm flex-1 ${isTaxEnabled && !form.pos_tax_ledger_id ? 'border-destructive' : ''}`} disabled={viewOnly}><SelectValue placeholder="Select ledger" /></SelectTrigger>
                         <SelectContent>
                           {!isTaxEnabled && <SelectItem value="__none__">— None —</SelectItem>}
                           {ledgers.map(l => <SelectItem key={l.id} value={l.id}>{l.name}{l.group_name ? ` (${l.group_name})` : ''}</SelectItem>)}
                         </SelectContent>
                       </Select>
                       <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Create new ledger"
-                        onClick={() => { setQuickLedgerTarget('pos_tax_ledger_id'); setQuickLedgerDefaultGroup('Duties & Taxes'); setQuickLedgerOpen(true); }}>
+                        onClick={() => { setQuickLedgerTarget('pos_tax_ledger_id'); setQuickLedgerDefaultGroup('Duties & Taxes'); setQuickLedgerOpen(true); }}
+                        disabled={viewOnly}
+                      >
                         <Plus className="h-3 w-3" />
                       </Button>
                     </div>
@@ -784,11 +840,13 @@ const VoucherTypeMaster = () => {
 
           <DialogFooter className="flex-shrink-0">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              Cancel
+              Close
             </Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : editingId ? 'Save Changes' : 'Create'}
-            </Button>
+            {!viewOnly && (
+              <Button onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : editingId ? 'Save Changes' : 'Create'}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

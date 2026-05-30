@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,24 +33,29 @@ interface AccountingLedgerEntry {
 interface AccountingFormProps {
   voucherType?: 'payment' | 'receipt';
   voucherTypeMeta?: VoucherTypeMeta;
+  viewOnly?: boolean;
+  autoPrint?: boolean;
 }
 
-const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: AccountingFormProps) => {
+const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta, viewOnly = false, autoPrint = false }: AccountingFormProps) => {
   const isPayment = voucherType !== 'receipt';
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = location.state?.returnTo;
   const { toast } = useToast();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, currentDate, periodFrom, periodTo } = useCompany();
   const billsEnabled = isCompanyBillsEnabled(selectedCompany);
+  const defaultVoucherDate = currentDate || selectedCompany?.last_voucher_date || new Date().toISOString().split('T')[0];
   const [loading, setLoading] = useState(false);
   const [ledgers, setLedgers] = useState<any[]>([]);
   const [savedVoucher, setSavedVoucher] = useState<any>(null);
+  const [printPreviewHtml, setPrintPreviewHtml] = useState<string | null>(null);
+  const printIframeRef = useRef<HTMLIFrameElement>(null);
 
   const [formData, setFormData] = useState({
     cash_bank_ledger_id: '',
     voucher_number: '',
-    voucher_date: new Date().toISOString().split('T')[0],
+    voucher_date: defaultVoucherDate,
     reference_number: '',
     reference_date: '',
     narration: ''
@@ -60,6 +65,10 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
     selectedCompany?.currency === 'INR' ? '₹' :
     selectedCompany?.currency === 'USD' ? '$' :
     selectedCompany?.currency || '₹';
+
+  // Derived once at component level so render can use it
+  const editVoucherId = new URLSearchParams(location.search).get('edit');
+  const isEditMode = !!editVoucherId;
 
   const [ledgerEntries, setLedgerEntries] = useState<AccountingLedgerEntry[]>([{
     id: '1',
@@ -144,6 +153,10 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
 
       if (entries.length > 0) setLedgerEntries(entries);
       setSavedVoucher(voucher);
+      // Auto-print after load (used by per-row print in reports)
+      if (autoPrint) {
+        setTimeout(() => handlePrint(voucher), 500);
+      }
     } catch (error) {
       console.error('Error loading voucher data:', error);
       toast({ title: 'Error', description: 'Failed to load voucher data', variant: 'destructive' });
@@ -279,6 +292,15 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
     e.preventDefault();
     if (!selectedCompany) return;
 
+    if (periodFrom && periodTo && (formData.voucher_date < periodFrom || formData.voucher_date > periodTo)) {
+      toast({
+        title: 'Date Out of Period',
+        description: `Voucher date must be within the current period (${periodFrom} to ${periodTo}).`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!formData.cash_bank_ledger_id) {
       toast({
         title: 'Validation Error',
@@ -409,7 +431,7 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
         setFormData({
           cash_bank_ledger_id: '',
           voucher_number: '',
-          voucher_date: new Date().toISOString().split('T')[0],
+          voucher_date: defaultVoucherDate,
           reference_number: '',
           reference_date: '',
           narration: ''
@@ -436,8 +458,28 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
       return;
     }
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+    let invoiceHtml = '';
+
+    // Inventory details section (if present)
+    let inventoryRows = '';
+    if (voucher.inventory && Array.isArray(voucher.inventory) && voucher.inventory.length > 0) {
+      inventoryRows = voucher.inventory.map((inv, idx) => {
+        const itemName = inv.item_name || inv.item?.name || '';
+        const batchNo = inv.batch_number || (inv.batch_allocations && inv.batch_allocations[0]?.batch_number) || '';
+        const hsn = inv.hsn_code || inv.item?.hsn_code || '';
+        const qty = inv.quantity || inv.qty || 0;
+        const rate = inv.rate || 0;
+        const amount = inv.amount || inv.net_amount || 0;
+        return `<tr>
+          <td>${idx + 1}</td>
+          <td>${itemName}${batchNo ? `<br><em>${batchNo}</em>` : ''}</td>
+          <td>${hsn}</td>
+          <td style="text-align:right">${qty}</td>
+          <td style="text-align:right">${rate}</td>
+          <td style="text-align:right">${amount}</td>
+        </tr>`;
+      }).join('');
+    }
 
     const totalNet = getTotalAmount();
 
@@ -481,7 +523,7 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
         </tr>`;
       }).join('');
 
-    printWindow.document.write(`
+    invoiceHtml = `
       <html><head>
         <title>${printTitle} - ${voucher.voucher_number}</title>
         <style>
@@ -505,6 +547,9 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
           .sign-area { margin-top: 30px; text-align: right; font-size: 12px; }
           .footer-row { display: flex; justify-content: space-between; margin-top: 40px; font-size: 11px; border-top: 1px solid #000; padding-top: 6px; }
           .footer-col { width: 33%; }
+          table.inventory { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          table.inventory th, table.inventory td { border: 1px solid #000; padding: 4px 6px; font-size: 11px; }
+          table.inventory th { background: #f5f5f5; }
         </style>
       </head><body>
         <div class="company-name">${selectedCompany?.name || ''}</div>
@@ -545,6 +590,8 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
           </tbody>
         </table>
 
+        ${inventoryRows ? `<div class="divider"></div><div style="font-weight:700;margin:8px 0 4px">Inventory Details</div><table class="inventory"><thead><tr><th>Sl</th><th>Item</th><th>HSN</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${inventoryRows}</tbody></table>` : ''}
+
         <div class="sign-area">Authorised Signatory</div>
 
         <div class="footer-row">
@@ -553,11 +600,8 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
           <div class="footer-col" style="text-align:right">Verified by</div>
         </div>
       </body></html>
-    `);
-
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => { try { printWindow.print(); } catch {} }, 100);
+    `;
+    setPrintPreviewHtml(invoiceHtml);
   };
 
   const handleLedgerCreated = (ledger: { id: string; name: string; group_name: string; tax_type?: string }) => {
@@ -585,7 +629,13 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <h1 className="text-2xl font-bold">{voucherTitle}</h1>
+            {viewOnly && (
+              <span className="ml-3 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">
+                View Only
+              </span>
+            )}
           </div>
+          {/* Print button shown in view only mode */}
           {savedVoucher && (
             <Button onClick={() => handlePrint()} variant="outline">
               <Printer className="h-4 w-4 mr-2" />
@@ -614,21 +664,24 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                   <div className="flex gap-2">
                     <SearchableDropdown
                       value={formData.cash_bank_ledger_id}
-                      onValueChange={(value) => setFormData({ ...formData, cash_bank_ledger_id: value })}
+                      onValueChange={viewOnly ? undefined : (value) => setFormData({ ...formData, cash_bank_ledger_id: value })}
                       placeholder="Select Account"
                       options={ledgers.map((ledger) => ({
                         value: ledger.id,
                         label: `${ledger.name} (${ledger.ledger_groups?.name})`,
                       }))}
+                      disabled={viewOnly}
                     />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => { setQuickCreateLedgerDefaultGroup(undefined); setQuickCreateLedgerOpen(true); }}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
+                    {!viewOnly && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { setQuickCreateLedgerDefaultGroup(undefined); setQuickCreateLedgerOpen(true); }}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -647,8 +700,9 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                   <Input
                     type="date"
                     value={formData.voucher_date}
-                    onChange={(e) => setFormData({ ...formData, voucher_date: e.target.value })}
+                    onChange={viewOnly ? undefined : (e) => setFormData({ ...formData, voucher_date: e.target.value })}
                     required
+                    readOnly={viewOnly}
                   />
                 </div>
 
@@ -656,8 +710,9 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                   <Label>Reference Number</Label>
                   <Input
                     value={formData.reference_number}
-                    onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
+                    onChange={viewOnly ? undefined : (e) => setFormData({ ...formData, reference_number: e.target.value })}
                     placeholder="Enter reference number"
+                    readOnly={viewOnly}
                   />
                 </div>
 
@@ -666,7 +721,8 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                   <Input
                     type="date"
                     value={formData.reference_date}
-                    onChange={(e) => setFormData({ ...formData, reference_date: e.target.value })}
+                    onChange={viewOnly ? undefined : (e) => setFormData({ ...formData, reference_date: e.target.value })}
+                    readOnly={viewOnly}
                   />
                 </div>
               </div>
@@ -675,9 +731,10 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                 <Label>Narration</Label>
                 <Textarea
                   value={formData.narration}
-                  onChange={(e) => setFormData({ ...formData, narration: e.target.value })}
+                  onChange={viewOnly ? undefined : (e) => setFormData({ ...formData, narration: e.target.value })}
                   placeholder="Enter description"
                   rows={4}
+                  readOnly={viewOnly}
                 />
               </div>
             </CardContent>
@@ -698,21 +755,24 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                         <div className="flex gap-2">
                           <SearchableDropdown
                             value={entry.ledger_id}
-                            onValueChange={(value) => handleLedgerChange(entry.id, value)}
+                            onValueChange={viewOnly ? undefined : (value) => handleLedgerChange(entry.id, value)}
                             placeholder="Select Ledger"
                             options={ledgers.map((ledger) => ({
                               value: ledger.id,
                               label: `${ledger.name} (${ledger.ledger_groups?.name})`,
                             }))}
+                            disabled={viewOnly}
                           />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => { setQuickCreateLedgerDefaultGroup(undefined); setQuickCreateLedgerOpen(true); }}
-                          >
-                            <Plus className="h-4 w-4" />
-                          </Button>
+                          {!viewOnly && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => { setQuickCreateLedgerDefaultGroup(undefined); setQuickCreateLedgerOpen(true); }}
+                            >
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <div>
@@ -720,23 +780,26 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
                         <Input
                           type="number"
                           value={entry.amount}
-                          onChange={(e) => handleAmountChange(entry.id, parseFloat(e.target.value) || 0)}
+                          onChange={viewOnly ? undefined : (e) => handleAmountChange(entry.id, parseFloat(e.target.value) || 0)}
                           placeholder="Enter amount"
                           min="0"
                           step="0.01"
+                          readOnly={viewOnly}
                         />
                       </div>
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeLedgerEntry(entry.id)}
-                      disabled={ledgerEntries.length === 1}
-                      className="mt-8"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {!viewOnly && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeLedgerEntry(entry.id)}
+                        disabled={ledgerEntries.length === 1}
+                        className="mt-8"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
 
                   <div className="mt-4 space-y-2">
@@ -781,12 +844,21 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
             <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
               Cancel
             </Button>
-            <Button
-              type="submit"
-              disabled={loading || !formData.cash_bank_ledger_id || ledgerEntries.every(e => !e.ledger_id || e.amount === 0)}
-            >
-              {loading ? 'Saving...' : `Save ${isPayment ? 'Payment' : 'Receipt'}`}
-            </Button>
+            {!viewOnly && (
+              <Button
+                type="submit"
+                disabled={loading || !formData.cash_bank_ledger_id || ledgerEntries.every(e => !e.ledger_id || e.amount === 0)}
+              >
+                {loading ? 'Saving...' : `Save ${isPayment ? 'Payment' : 'Receipt'}`}
+              </Button>
+            )}
+            {/* Print button removed in view only mode */}
+            {savedVoucher && !viewOnly && (
+              <Button type="button" onClick={() => handlePrint()} variant="outline">
+                <Printer className="h-4 w-4 mr-2" />
+                Print
+              </Button>
+            )}
           </div>
         </form>
 
@@ -811,6 +883,39 @@ const AccountingForm = ({ voucherType = 'payment', voucherTypeMeta }: Accounting
         />
         </div>
       </div>
+
+      {/* ── Print Preview Modal ── */}
+      {printPreviewHtml && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setPrintPreviewHtml(null); }}
+        >
+          <div className="flex items-center justify-between bg-white px-4 py-2 border-b shadow-sm">
+            <span className="font-semibold text-sm">Print Preview</span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const ifw = printIframeRef.current?.contentWindow;
+                  if (ifw) { ifw.focus(); ifw.print(); }
+                }}
+              >
+                <Printer className="h-4 w-4 mr-1" />
+                Print
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setPrintPreviewHtml(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+          <iframe
+            ref={printIframeRef}
+            srcDoc={printPreviewHtml}
+            className="flex-1 w-full bg-white"
+            title="Print Preview"
+          />
+        </div>
+      )}
     </div>
   );
 };

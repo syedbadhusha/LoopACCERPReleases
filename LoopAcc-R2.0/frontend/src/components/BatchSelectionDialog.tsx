@@ -6,6 +6,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
+import { API_BASE_URL } from '@/config/runtime';
 
 interface Batch {
   id: string;
@@ -67,7 +68,7 @@ export const BatchSelectionDialog = ({
   const fetchBatches = async () => {
     setLoading(true);
     try {
-      const url = `http://localhost:5000/api/batch-allocations?itemId=${itemId}&companyId=${companyId}`;
+      const url = `${API_BASE_URL}/batch-allocations?itemId=${itemId}&companyId=${companyId}`;
       console.log(`[BatchSelectionDialog] Fetching batches from: ${url}`);
       console.log(`[BatchSelectionDialog] itemId=${itemId}, companyId=${companyId}`);
       
@@ -182,7 +183,7 @@ export const BatchSelectionDialog = ({
 
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:5000/api/batch-allocations', {
+      const response = await fetch(`${API_BASE_URL}/batch-allocations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

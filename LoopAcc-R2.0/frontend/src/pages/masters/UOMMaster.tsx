@@ -10,10 +10,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Plus, Edit, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Edit, Trash2, Eye } from 'lucide-react';
+import { usePermissions } from '@/contexts/PermissionContext';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 
@@ -27,12 +29,15 @@ const UOMMaster = () => {
   const [uoms, setUoms] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingUom, setEditingUom] = useState<any>(null);
-  
+  const [viewOnly, setViewOnly] = useState(false);
+
   const [formData, setFormData] = useState({
     name: '',
     symbol: '',
     decimal_places: 2
   });
+
+  const { can } = usePermissions();
 
   useEffect(() => {
     fetchData();
@@ -66,7 +71,8 @@ const UOMMaster = () => {
     setShowForm(false);
   };
 
-  const handleEdit = (uom: any) => {
+  const handleEdit = (uom: any, opts?: { viewOnly?: boolean }) => {
+    setViewOnly(!!opts?.viewOnly);
     setFormData({
       name: uom.name,
       symbol: uom.symbol || '',
@@ -148,11 +154,15 @@ const UOMMaster = () => {
       if (!json.success) throw new Error(json.message || 'Delete failed');
       toast({ title: "Success", description: "UOM deleted successfully!" });
       fetchData();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting UOM:', error);
+      let msg = error?.message || 'Failed to delete UOM';
+      if (msg.includes('used by') && msg.includes('item')) {
+        msg = 'Cannot delete: This UOM is already used by one or more items.';
+      }
       toast({
         title: "Error",
-        description: "Failed to delete UOM",
+        description: msg,
         variant: "destructive"
       });
     }
@@ -185,19 +195,22 @@ const UOMMaster = () => {
               <p className="text-sm text-muted-foreground">{selectedCompany.name}</p>
             </div>
           </div>
-          <Button onClick={() => setShowForm(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add UOM
-          </Button>
+          {can && can('master_uom_create') && (
+            <Button onClick={() => setShowForm(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add UOM
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto p-6">
 
         <Dialog open={showForm} onOpenChange={(open) => { if (!open) resetForm(); }}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent aria-description="undefined" className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{editingUom ? 'Edit UOM' : 'Add New UOM'}</DialogTitle>
+              <DialogTitle>{viewOnly ? 'View UOM' : editingUom ? 'Edit UOM' : 'Add New UOM'}</DialogTitle>
+              <DialogDescription>Fill all required UOM details and save.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -209,6 +222,7 @@ const UOMMaster = () => {
                       onChange={(e) => setFormData({...formData, name: e.target.value})}
                       placeholder="Enter UOM name (e.g., Kilogram, Piece, Meter)"
                       required
+                      readOnly={viewOnly}
                     />
                   </div>
                   
@@ -218,6 +232,7 @@ const UOMMaster = () => {
                       value={formData.symbol}
                       onChange={(e) => setFormData({...formData, symbol: e.target.value})}
                       placeholder="Enter symbol (e.g., kg, pcs, m)"
+                      readOnly={viewOnly}
                     />
                   </div>
                   
@@ -225,9 +240,10 @@ const UOMMaster = () => {
                     <Label>Decimal Places</Label>
                     <SearchableDropdown
                       value={formData.decimal_places.toString()}
-                      onValueChange={(value) => setFormData({ ...formData, decimal_places: parseInt(value || '0') || 0 })}
+                      onValueChange={viewOnly ? undefined : (value) => setFormData({ ...formData, decimal_places: parseInt(value || '0') || 0 })}
                       placeholder="Select decimal places"
                       options={['0', '1', '2', '3', '4'].map((value) => ({ value, label: value }))}
+                      disabled={viewOnly}
                     />
                   </div>
                 </div>
@@ -236,9 +252,11 @@ const UOMMaster = () => {
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={loading}>
-                    {loading ? 'Saving...' : (editingUom ? 'Update' : 'Save')}
-                  </Button>
+                  {!viewOnly && (
+                    <Button type="submit" disabled={loading}>
+                      {loading ? 'Saving...' : (editingUom ? 'Update' : 'Save')}
+                    </Button>
+                  )}
                 </DialogFooter>
             </form>
           </DialogContent>
@@ -263,12 +281,21 @@ const UOMMaster = () => {
                     <TableCell>{uom.decimal_places}</TableCell>
                     <TableCell>
                       <div className="flex space-x-2">
-                        <Button variant="outline" size="sm" onClick={() => handleEdit(uom)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => handleDelete(uom.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {can && can('master_uom_view') && (
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(uom, { viewOnly: true })} title="View">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {can && can('master_uom_edit') && (
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(uom)} title="Edit">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {can && can('master_uom_delete') && (
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(uom.id)} title="Delete">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

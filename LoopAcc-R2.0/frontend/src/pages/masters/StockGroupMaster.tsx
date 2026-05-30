@@ -10,12 +10,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Plus, Edit, Trash2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { ArrowLeft, Plus, Edit, Trash2, Eye } from 'lucide-react';
+import { usePermissions } from '@/contexts/PermissionContext';
 import { useCompany } from '@/contexts/CompanyContext';
+import { useToast } from '@/hooks/use-toast';
 
 const StockGroupMaster = () => {
   const navigate = useNavigate();
@@ -26,6 +28,8 @@ const StockGroupMaster = () => {
   const [loading, setLoading] = useState(false);
   const [stockGroups, setStockGroups] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [viewOnly, setViewOnly] = useState(false);
+  const { can } = usePermissions();
   const [editingGroup, setEditingGroup] = useState<any>(null);
   
   const [formData, setFormData] = useState({
@@ -71,15 +75,17 @@ const StockGroupMaster = () => {
       parent_group_id: 'none'
     });
     setEditingGroup(null);
+    setViewOnly(false);
     setShowForm(false);
   };
 
-  const handleEdit = (group: any) => {
+  const handleEdit = (group: any, opts?: { viewOnly?: boolean }) => {
     setFormData({
       name: group.name,
       alias: group.alias || '',
       parent_group_id: group.parent_group_id || 'none'
     });
+    setViewOnly(!!opts?.viewOnly);
     setEditingGroup(group);
     setShowForm(true);
   };
@@ -192,19 +198,22 @@ const StockGroupMaster = () => {
               <p className="text-sm text-muted-foreground">{selectedCompany.name}</p>
             </div>
           </div>
-          <Button onClick={() => setShowForm(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Stock Group
-          </Button>
+          {can && can('master_stockgroup_create') && (
+            <Button onClick={() => setShowForm(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Stock Group
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-6">
 
         <Dialog open={showForm} onOpenChange={(open) => { if (!open) resetForm(); }}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent aria-description="undefined" className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{editingGroup ? 'Edit Stock Group' : 'Add New Stock Group'}</DialogTitle>
+              <DialogTitle>{viewOnly ? 'View Stock Group' : editingGroup ? 'Edit Stock Group' : 'Add New Stock Group'}</DialogTitle>
+              <DialogDescription>Fill all required stock group details and save.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -212,9 +221,11 @@ const StockGroupMaster = () => {
                     <Label>Group Name *</Label>
                     <Input 
                       value={formData.name}
-                      onChange={(e) => setFormData({...formData, name: e.target.value})}
+                      onChange={viewOnly ? undefined : (e) => setFormData({...formData, name: e.target.value})}
                       placeholder="Enter group name"
                       required
+                      readOnly={viewOnly}
+                      disabled={viewOnly}
                     />
                   </div>
                   
@@ -222,8 +233,10 @@ const StockGroupMaster = () => {
                     <Label>Alias</Label>
                     <Input 
                       value={formData.alias}
-                      onChange={(e) => setFormData({...formData, alias: e.target.value})}
+                      onChange={viewOnly ? undefined : (e) => setFormData({...formData, alias: e.target.value})}
                       placeholder="Enter alias"
+                      readOnly={viewOnly}
+                      disabled={viewOnly}
                     />
                   </div>
 
@@ -232,19 +245,22 @@ const StockGroupMaster = () => {
                     <div className="flex gap-2">
                       <SearchableDropdown
                         value={formData.parent_group_id}
-                        onValueChange={(value) => setFormData({ ...formData, parent_group_id: value })}
+                        onValueChange={viewOnly ? undefined : (value) => setFormData({ ...formData, parent_group_id: value })}
                         placeholder="Select parent group (optional)"
-                        options={[
+                        options={[ 
                           { value: 'none', label: 'None (Primary Group)' },
                           ...stockGroups
                             .filter((g) => !editingGroup || g.id !== editingGroup.id)
                             .map((group) => ({ value: group.id, label: group.name })),
                         ]}
+                        disabled={viewOnly}
                       />
                       <Button type="button" variant="outline" size="sm" onClick={() => {
                         const returnPath = window.location.pathname;
                         navigate('/stock-group-master', { state: { returnTo: returnPath, autoShowForm: true } });
-                      }}>
+                      }}
+                      disabled={viewOnly}
+                    >
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>
@@ -255,9 +271,11 @@ const StockGroupMaster = () => {
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={loading}>
-                    {loading ? 'Saving...' : (editingGroup ? 'Update' : 'Save')}
-                  </Button>
+                  {!viewOnly && (
+                    <Button type="submit" disabled={loading}>
+                      {loading ? 'Saving...' : (editingGroup ? 'Update' : 'Save')}
+                    </Button>
+                  )}
                 </DialogFooter>
             </form>
           </DialogContent>
@@ -282,12 +300,21 @@ const StockGroupMaster = () => {
                     <TableCell>{group.parent?.name || 'Primary Group'}</TableCell>
                     <TableCell>
                       <div className="flex space-x-2">
-                        <Button variant="outline" size="sm" onClick={() => handleEdit(group)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => handleDelete(group.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {can && can('master_stockgroup_view') && (
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(group, { viewOnly: true })} title="View">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {can && can('master_stockgroup_edit') && (
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(group)} title="Edit">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {can && can('master_stockgroup_delete') && (
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(group.id)} title="Delete">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

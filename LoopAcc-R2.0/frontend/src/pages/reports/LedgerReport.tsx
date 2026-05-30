@@ -1,20 +1,164 @@
-import { useState, useEffect, useMemo } from 'react';
+
+
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { VoucherViewModal } from '@/components/VoucherViewModal';
+import AccountingVchViewForm from '../forms/AccountingVchViewForm';
+import InventoryVchViewForm from '../forms/InventoryVchViewForm';
+import POSViewForm from '../pos/POSViewForm';
+
+import { API_BASE_URL } from '@/config/runtime';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, Download, Edit, Printer, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, Edit, Printer, Trash2, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 import { format } from 'date-fns';
 
+const normalizeBool = (val: any) =>
+  val === true || val === "true" || val === 1;
 const LedgerReport = () => {
   const navigate = useNavigate();
+
+  // --- Voucher-wise view modal state and handler ---
+  const [viewVoucher, setViewVoucher] = useState<{
+    voucherId: string,
+    voucherTypeId: string,
+    voucherType: string,
+    voucherTypeName?: string,
+    isInventory?: boolean,
+    isPOS?: boolean
+  } | null>(null);
+  const [voucherTypeName, setVoucherTypeName] = useState<string>('');
+  const handleViewVoucher = async (row: any) => {
+  const voucherId = String(row?.voucherId || '');
+  const voucherTypeId = String(row?.voucherTypeId || '');
+  const voucherType = String(row?.voucherType || '').toLowerCase();
+  const isPos = normalizeBool(row?.is_pos);
+      localStorage.setItem('ledgerReport_dateFrom', dateFrom);
+      localStorage.setItem('ledgerReport_dateTo', dateTo);
+      if (!voucherId || !voucherTypeId) return;
+    if (isPos) {
+      navigate(`/pos?view=${voucherId}`);
+      return;
+    }
+
+  try {
+    const resp = await fetch(`${API_BASE_URL}/voucher-types/${voucherTypeId}`);
+    const json = await resp.json();
+    const vt = json.data;
+    const isInventory =
+      vt && ['sales', 'credit-note', 'purchase', 'debit-note'].includes(vt.base_type);
+    // ✅ FINAL CORRECT LOGIC
+    const isPOS =
+      normalizeBool(row?.is_pos) ||
+      normalizeBool(row?.isPos) || // fallback (if different naming)
+      normalizeBool(vt?.is_pos);
+    setViewVoucher({
+      voucherId,
+      voucherTypeId,
+      voucherType,
+      voucherTypeName: vt?.name,
+      isInventory,
+      isPOS,
+    });
+
+  } catch {
+    setViewVoucher({
+      voucherId,
+      voucherTypeId,
+      voucherType,
+      isPOS: normalizeBool(row?.is_pos),
+    });
+  }
+};
+  const handlePrintVoucher = (row: any) => {
+    const voucherId = String(row?.voucherId || '');
+    const voucherTypeId = String(row?.voucherTypeId || '');
+    if (!voucherId || !voucherTypeId) return;
+    navigate(`/vouchers?typeId=${voucherTypeId}&edit=${voucherId}&autoPrint=1`, { state: { returnTo: '/reports/ledger' } });
+  };
   const [searchParams] = useSearchParams();
-  const { selectedCompany } = useCompany();
+  const [printPreviewHtml, setPrintPreviewHtml] = useState<string | null>(null);
+  const printIframeRef = useRef<HTMLIFrameElement>(null);
+
+  const handlePrint = () => {
+    let reportHtml = '';
+    const totalDebit = reportData.reduce((sum, row) => sum + Number(row.debit || 0), 0);
+    const totalCredit = reportData.reduce((sum, row) => sum + Number(row.credit || 0), 0);
+    reportHtml = `
+      <html>
+        <head>
+          <title>Ledger Report - ${selectedCompany?.name}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; font-size: 12px; }
+            .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+            .period { text-align: center; margin-bottom: 20px; font-weight: bold; }
+            .ledger { width: 100%; border-collapse: collapse; }
+            .ledger th, .ledger td { border: 1px solid #000; padding: 6px; text-align: left; }
+            .ledger th { background-color: #f0f0f0; font-weight: bold; }
+            .total-row { font-weight: bold; background-color: #f0f0f0; }
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${selectedCompany?.name}</h1>
+            <h2>LEDGER REPORT</h2>
+            <div>${ledgerInfo?.name ? `Ledger: ${ledgerInfo.name}` : ''}</div>
+          </div>
+          <div class="period">
+            Period: ${dateFrom} to ${dateTo}
+          </div>
+          <table class="ledger">
+            <thead>
+              <tr>
+                  <th>Date</th>
+                  <th>Particulars</th>
+                  <th>Voucher Type</th>
+                  <th>Vch No.</th>
+                  <th>Debit</th>
+                  <th>Credit</th>
+                  <th>Running Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="4" class="text-right"><strong>Opening Balance :</strong></td>
+                  <td class="text-right">${openingBalance < 0 ? `${currencySymbol} ${formatAmount(Math.abs(openingBalance))}` : ''}</td>
+                  <td class="text-right">${openingBalance > 0 ? `${currencySymbol} ${formatAmount(Math.abs(openingBalance))}` : ''}</td>
+                  <td></td>
+                </tr>
+                ${reportData.map(row => `
+                  <tr>
+                    <td>${row.date}</td>
+                    <td>${row.particulars}</td>
+                    <td>${row.voucherTypeName || row.voucherType || '-'}</td>
+                    <td>${row.voucherNumber || '-'}</td>
+                    <td class="text-right">${row.debit > 0 ? `${currencySymbol} ${formatAmount(Number(row.debit))}` : ''}</td>
+                    <td class="text-right">${row.credit > 0 ? `${currencySymbol} ${formatAmount(Number(row.credit))}` : ''}</td>
+                    <td class="text-right">${formatSignedBalance(Number(row.balance || 0))}</td>
+                  </tr>
+                `).join('')}
+                <tr class="total-row">
+                  <td colspan="4"><strong>Current Total :</strong></td>
+                  <td class="text-right"><strong>${currencySymbol} ${formatAmount(runningDebitTotal)}</strong></td>
+                  <td class="text-right"><strong>${currencySymbol} ${formatAmount(runningCreditTotal)}</strong></td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </body>
+        </html>
+      `;
+      setPrintPreviewHtml(reportHtml);
+    };
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
   const { toast } = useToast();
   const currencySymbol = selectedCompany?.currency === 'INR' ? '₹' : selectedCompany?.currency === 'USD' ? '$' : selectedCompany?.currency || '₹';
   const queryLedgerId = searchParams.get('ledgerId') || '';
@@ -22,19 +166,12 @@ const LedgerReport = () => {
   const queryDateFrom = searchParams.get('dateFrom') || '';
   const queryDateTo = searchParams.get('dateTo') || '';
   
-  const [dateFrom, setDateFrom] = useState(() => {
-    if (queryDateFrom) return queryDateFrom;
-    const saved = localStorage.getItem('ledgerReport_dateFrom');
-    if (saved) return saved;
-    const today = new Date();
-    const yearStart = new Date(today.getFullYear(), 3, 1); // April 1st
-    return format(yearStart, 'yyyy-MM-dd');
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    if (queryDateTo) return queryDateTo;
-    const saved = localStorage.getItem('ledgerReport_dateTo');
-    return saved || format(new Date(), 'yyyy-MM-dd');
-  });
+  const [dateFrom, setDateFrom] = useState(() => queryDateFrom || periodFrom);
+  const [dateTo, setDateTo] = useState(() => queryDateTo || periodTo);
+
+  // Sync with global period when it changes (unless URL param override)
+  useEffect(() => { if (!queryDateFrom) setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { if (!queryDateTo) setDateTo(periodTo); }, [periodTo]);
   
   const [ledgers, setLedgers] = useState<any[]>([]);
   const [selectedLedger, setSelectedLedger] = useState(queryLedgerId);
@@ -55,11 +192,6 @@ const LedgerReport = () => {
   }, [queryLedgerId]);
 
   useEffect(() => {
-    localStorage.setItem('ledgerReport_dateFrom', dateFrom);
-    localStorage.setItem('ledgerReport_dateTo', dateTo);
-  }, [dateFrom, dateTo]);
-
-  useEffect(() => {
     if (selectedLedger && dateFrom && dateTo) {
       fetchLedgerReport();
     }
@@ -70,7 +202,7 @@ const LedgerReport = () => {
       const params = new URLSearchParams({
         companyId: selectedCompany?.id || '',
       });
-      const resp = await fetch(`http://localhost:5000/api/ledgers?${params}`);
+      const resp = await fetch(`${API_BASE_URL}/ledgers?${params}`);
       if (!resp.ok) throw new Error('Failed to fetch ledgers');
       
       const json = await resp.json();
@@ -101,34 +233,50 @@ const LedgerReport = () => {
     }
   }, [queryGroupId, queryLedgerId, selectedLedger, visibleLedgers]);
 
-  const fetchLedgerReport = async () => {
-    try {
-      const params = new URLSearchParams({
-        companyId: selectedCompany?.id || '',
-        ledgerId: selectedLedger,
-        dateFrom,
-        dateTo,
-      });
-      const resp = await fetch(`http://localhost:5000/api/ledgers/report/ledger?${params}`);
-      if (!resp.ok) throw new Error('Failed to fetch ledger report data');
-      
-      const json = await resp.json();
-      const ledgerData = json?.data?.ledger || null;
-      const rows = Array.isArray(json?.data?.transactions) ? json.data.transactions : [];
-      const openingSigned = Number(json?.data?.opening || 0);
+  // Utility copied from backend for safe number conversion
+  function toFiniteNumber(value: any, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
 
-      setLedgerInfo(ledgerData);
-      setOpeningBalance(openingSigned);
+const fetchLedgerReport = async () => {
+  try {
+    const params = new URLSearchParams({
+      companyId: selectedCompany?.id || '',
+      ledgerId: selectedLedger,
+      dateFrom,
+      dateTo,
+    });
 
-      setReportData(rows);
-    } catch (error) {
-      console.error('Error fetching ledger report:', error);
-      setReportData([]);
-      setLedgerInfo(null);
-      setOpeningBalance(0);
-    }
-  };
+    const resp = await fetch(`${API_BASE_URL}/ledgers/report/ledger?${params}`);
+    if (!resp.ok) throw new Error('Failed to fetch ledger report data');
 
+    const json = await resp.json();
+    const ledgerData = json?.data?.ledger || null;
+
+    // ✅ IMPORTANT: DO NOT TOUCH is_pos here
+    const rows = Array.isArray(json?.data?.transactions)
+      ? json.data.transactions.map(row => ({
+          ...row,
+          // ❌ DO NOT normalize here
+          // just pass raw value
+          is_pos: row?.is_pos
+        }))
+      : [];
+
+    const openingSigned = toFiniteNumber(json?.data?.opening || 0);
+
+    setLedgerInfo(ledgerData);
+    setOpeningBalance(openingSigned);
+    setReportData(rows);
+
+  } catch (error) {
+    console.error('Error fetching ledger report:', error);
+    setReportData([]);
+    setLedgerInfo(null);
+    setOpeningBalance(0);
+  }
+};
   const formatAmount = (value: number) =>
     value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -147,7 +295,7 @@ const LedgerReport = () => {
     if (!voucherId) return;
     if (!confirm('Are you sure you want to delete this voucher?')) return;
     try {
-      const resp = await fetch(`http://localhost:5000/api/vouchers/${voucherId}`, {
+      const resp = await fetch(`${API_BASE_URL}/vouchers/${voucherId}`, {
         method: 'DELETE',
       });
       if (!resp.ok) throw new Error('Failed to delete voucher');
@@ -196,7 +344,7 @@ const LedgerReport = () => {
             <h1 className="text-2xl font-bold">Ledger Report</h1>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
+            <Button variant="outline" onClick={handlePrint}>
               <Printer className="h-4 w-4 mr-2" />
               Print
             </Button>
@@ -207,6 +355,39 @@ const LedgerReport = () => {
           </div>
         </div>
       </div>
+
+      {/* ── Print Preview Modal ── */}
+      {printPreviewHtml && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setPrintPreviewHtml(null); }}
+        >
+          <div className="flex items-center justify-between bg-white px-4 py-2 border-b shadow-sm">
+            <span className="font-semibold text-sm">Print Preview</span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const ifw = printIframeRef.current?.contentWindow;
+                  if (ifw) { ifw.focus(); ifw.print(); }
+                }}
+              >
+                <Printer className="h-4 w-4 mr-1" />
+                Print
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setPrintPreviewHtml(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+          <iframe
+            ref={printIframeRef}
+            srcDoc={printPreviewHtml}
+            className="flex-1 w-full bg-white"
+            title="Print Preview"
+          />
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-6">
 
@@ -264,6 +445,29 @@ const LedgerReport = () => {
             </CardTitle>
             </CardHeader>
             <CardContent>
+            {/* ── Voucher View Modal ── */}
+            {viewVoucher && (
+            <VoucherViewModal open={!!viewVoucher} onOpenChange={(open) =>{if (!open) {
+              setViewVoucher(null);
+              (document.activeElement as HTMLElement)?.blur();} }}>
+              <div className="px-6 pt-4 pb-2 border-b flex items-center justify-between">
+                <span className="font-semibold text-lg">{viewVoucher.voucherTypeName || voucherTypeName || viewVoucher.voucherType}</span>
+                <Button size="sm" variant="outline" onClick={() => setViewVoucher(null)}>Close</Button>
+              </div>
+              {viewVoucher.isPOS ? (
+              <POSViewForm voucherId={viewVoucher.voucherId} onClose={() => setViewVoucher(null)} />
+              ) : viewVoucher.isInventory ? (
+              <InventoryVchViewForm
+                voucherId={viewVoucher.voucherId}
+                voucherTypeId={viewVoucher.voucherTypeId}
+                voucherType={viewVoucher.voucherType as 'sales' | 'credit-note' | 'purchase' | 'debit-note'}
+                onClose={() => setViewVoucher(null)}
+              />
+              ) : (
+              <AccountingVchViewForm voucherId={viewVoucher.voucherId} voucherTypeId={viewVoucher.voucherTypeId} onClose={() => setViewVoucher(null)} />
+              )}
+              </VoucherViewModal>
+              )}
               <Table className="border border-border">
                 <TableHeader>
                   <TableRow>
@@ -300,11 +504,22 @@ const LedgerReport = () => {
                           <Button
                             size="sm"
                             variant="outline"
+                            onClick={() => (handleViewVoucher(row))}
+                            disabled={!row?.voucherId}
+                            title="View"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
                             onClick={() => handleEditVoucher(row)}
                             disabled={!row?.voucherId}
+                            title="Edit"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
+                          {/* Print button removed from per-row actions */}
                           <Button
                             size="sm"
                             variant="outline"

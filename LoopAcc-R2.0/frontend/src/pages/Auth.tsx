@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth, LicenseOption } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, ArrowLeft, Eye, EyeOff } from 'lucide-react';
-
+import { Loader2, ArrowLeft, Eye, EyeOff, Building2, CheckCircle2 } from 'lucide-react';
+import { API_BASE_URL } from '@/config/runtime';
 const Auth = () => {
-  const { user, loading, signIn, signUp, sendPasswordResetOTP, resetPasswordWithOTP } = useAuth();
+  const { user, loading, signIn, signInWithLicense, signUp, sendPasswordResetOTP, resetPasswordWithOTP } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [signupData, setSignupData] = useState({ email: '', password: '', fullName: '' });
@@ -25,6 +26,10 @@ const Auth = () => {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  // License selection state
+  const [licenseOptions, setLicenseOptions] = useState<LicenseOption[] | null>(null);
+  const [pendingCredentials, setPendingCredentials] = useState<{ email: string; password: string } | null>(null);
+  const [signupDone, setSignupDone] = useState(false);
   // Check if user clicked password reset link from email/console
   useEffect(() => {
     const type = searchParams.get('type');
@@ -50,9 +55,12 @@ const Auth = () => {
     }
   }, [searchParams]);
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated — send to change-password first if needed
   if (!loading && user) {
-    return <Navigate to="/dashboard" replace />;
+    if (user.must_change_password) {
+      return <Navigate to="/change-password" replace />;
+    }
+    return <Navigate to="/company-selection" replace />;
   }
 
   // Show loading spinner while checking auth state
@@ -69,7 +77,37 @@ const Auth = () => {
     setIsLoading(true);
     
     try {
-      await signIn(loginData.email, loginData.password);
+      const result = await signIn(loginData.email, loginData.password);
+      if (!result.error) {
+        if (result.requires_license_selection && result.licenses) {
+          // Store credentials temporarily and show license picker
+          setPendingCredentials({ email: loginData.email, password: loginData.password });
+          setLicenseOptions(result.licenses);
+        } else if (result.must_change_password) {
+          navigate('/change-password', { replace: true });
+        } else {
+          navigate('/company-selection', { replace: true });
+        }
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLicenseSelect = async (userId: string) => {
+    if (!pendingCredentials) return;
+    setIsLoading(true);
+    try {
+      const result = await signInWithLicense(pendingCredentials.email, pendingCredentials.password, userId);
+      if (!result.error) {
+        setLicenseOptions(null);
+        setPendingCredentials(null);
+        if (result.must_change_password) {
+          navigate('/change-password', { replace: true });
+        } else {
+          navigate('/company-selection', { replace: true });
+        }
+      }
     } finally {
       setIsLoading(false);
     }
@@ -80,7 +118,10 @@ const Auth = () => {
     setIsLoading(true);
     
     try {
-      await signUp(signupData.email, signupData.password, signupData.fullName);
+      const result = await signUp(signupData.email, signupData.password, signupData.fullName);
+      if (!result.error) {
+        setSignupDone(true);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -106,7 +147,7 @@ const Auth = () => {
     
     try {
       // Verify the reset code
-      const response = await fetch('http://localhost:5000/api/auth/verify-reset-token', {
+      const response = await fetch(`${API_BASE_URL}/auth/verify-reset-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -359,6 +400,57 @@ const Auth = () => {
                   </form>
                 )}
               </div>
+            ) : licenseOptions ? (
+              /* ── License selection screen ── */
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Building2 className="h-5 w-5 text-primary" />
+                  <h3 className="font-semibold text-base">Select a License to Continue</h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Your email is linked to multiple licenses. Choose one to log in.
+                </p>
+                <div className="space-y-3">
+                  {licenseOptions.map((lic) => (
+                    <button
+                      key={lic.user_id}
+                      onClick={() => handleLicenseSelect(lic.user_id)}
+                      disabled={isLoading}
+                      className="w-full text-left border rounded-lg p-4 hover:border-primary hover:bg-primary/5 transition-colors disabled:opacity-50"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Building2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                          <div>
+                            <p className="font-medium">
+                              {lic.company_name ?? <span className="italic text-muted-foreground">No company yet</span>}
+                            </p>
+                            <p className="text-xs text-muted-foreground capitalize">
+                              {lic.plan} Plan · {lic.is_owner ? 'License Owner' : 'Sub-user'} · {' '}
+                              {lic.valid_until
+                                ? `Expires ${new Date(lic.valid_until).toLocaleDateString('en-GB')}`
+                                : 'No expiry'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${lic.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {lic.is_active ? 'Active' : 'Inactive'}
+                          </span>
+                          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4 text-muted-foreground" />}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  variant="ghost"
+                  className="w-full text-sm"
+                  onClick={() => { setLicenseOptions(null); setPendingCredentials(null); }}
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" /> Back to Login
+                </Button>
+              </div>
             ) : (
               <Tabs defaultValue="login" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
@@ -430,6 +522,32 @@ const Auth = () => {
               </TabsContent>
               
               <TabsContent value="signup" className="space-y-4">
+                {signupDone ? (
+                  <div className="text-center py-6 space-y-4">
+                    <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mx-auto">
+                      <svg className="h-7 w-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">Account Created!</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Your account is pending activation.
+                      </p>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800 text-left">
+                      <p className="font-semibold mb-1">License Activation Required</p>
+                      <p>Please contact <span className="font-medium">LoopAcc Support</span> to activate your license before you can log in.</p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => { setSignupDone(false); setSignupData({ email: '', password: '', fullName: '' }); }}
+                    >
+                      Back to Sign In
+                    </Button>
+                  </div>
+                ) : (
                 <form onSubmit={handleSignup} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="signup-name">Full Name</Label>
@@ -492,11 +610,23 @@ const Auth = () => {
                     )}
                   </Button>
                 </form>
+                )}
               </TabsContent>
             </Tabs>
             )}
           </CardContent>
         </Card>
+
+        {/* App owner admin access */}
+        <p className="text-center mt-4">
+          <button
+            type="button"
+            onClick={() => navigate('/admin')}
+            className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+          >
+            App Admin
+          </button>
+        </p>
       </div>
     </div>
   );

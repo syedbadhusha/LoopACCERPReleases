@@ -1,3 +1,26 @@
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { useToast } from '@/hooks/use-toast';
+import { useCompany } from '@/contexts/CompanyContext';
+import { isCompanyTaxEnabled, getCompanyTaxType, isCompanyBatchesEnabled } from '@/lib/companyTax';
+import { API_BASE_URL } from '@/config/runtime';
+import { Banknote, CreditCard, Smartphone, Loader2, Trash2, Plus, Minus, ArrowLeft, ShoppingCart, Package, RotateCcw, Search, CheckCircle2, Printer } from 'lucide-react';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+import { BatchSelectionDialog } from '@/components/BatchSelectionDialog';
+import BatchAllocationDialog from '@/components/BatchAllocationDialog';
+// All duplicate and stray code removed. Only keep the correct imports and types below.
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -5,56 +28,19 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  ArrowLeft,
-  Search,
-  ShoppingCart,
-  Trash2,
-  Plus,
-  Minus,
-  CreditCard,
-  Banknote,
-  Smartphone,
-  CheckCircle2,
-  Loader2,
-  Package,
-  ChevronDown,
-  RotateCcw,
-  Printer,
-} from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useCompany } from '@/contexts/CompanyContext';
-import { API_BASE_URL } from '@/config/runtime';
-import { isCompanyTaxEnabled, getCompanyTaxType, isCompanyBatchesEnabled } from '@/lib/companyTax';
 import QuickCreateItemDialog from '@/components/QuickCreateItemDialog';
-import { BatchSelectionDialog } from '@/components/BatchSelectionDialog';
-import { BatchAllocationDialog } from '@/components/BatchAllocationDialog';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
+// POS Voucher Type definition (from VoucherTypeMaster)
 interface PosVoucherType {
   id: string;
+  company_id: string;
   name: string;
   base_type: string;
+  is_system: boolean;
+  is_pos: boolean;
   prefix: string;
   suffix: string;
   starting_number: number;
-  is_system: boolean;
-  is_pos: boolean;
   pos_sales_ledger_id?: string;
   pos_cash_ledger_id?: string;
   pos_card_ledger_id?: string;
@@ -62,25 +48,44 @@ interface PosVoucherType {
   pos_tax_ledger_id?: string;
   pos_cgst_ledger_id?: string;
   pos_sgst_ledger_id?: string;
+  print_after_save?: boolean;
+  print_title?: string;
 }
-
+// Extend ItemMaster type
 interface ItemMaster {
   id: string;
   name: string;
-  sales_rate: number;
-  tax_rate: number;
-  igst_rate: number;
-  cgst_rate: number;
-  sgst_rate: number;
+  sales_rate?: number;
+  igst_rate?: number;
+  tax_rate?: number;
   enable_batches?: boolean;
-  image?: string;
+  standard_rates?: { date: string; rate: number }[];
+  stock_groups?: { name: string };
+  stock_categories?: { name: string };
   hsn_code?: string;
-  uom_master?: { name: string; symbol: string };
-  stock_groups?: { id: string; name: string };
-  stock_categories?: { id: string; name: string };
-  standard_rates?: { date: string; cost: number; rate: number }[];
+  image?: string;
+  uom_master?: { symbol?: string; name?: string };
+  cgst_rate?: number;
+  sgst_rate?: number;
 }
 
+// Minimal type definitions for this file (adjust as needed)
+type PaymentMethod = 'cash' | 'card' | 'online';
+interface CartItem {
+  id: string;
+  item: ItemMaster;
+  qty: number;
+  rate: number;
+  discount_percent: number;
+  discount_amount: number;
+  tax_percent: number;
+  tax_amount: number;
+  amount: number;
+  net_amount: number;
+  batch_id?: string | null;
+  batch_number?: string | null;
+  batch_allocations?: any[];
+}
 interface ReceiptData {
   voucherNumber: string;
   voucherDate: string;
@@ -90,38 +95,20 @@ interface ReceiptData {
   totalDiscount: number;
   totalTax: number;
   grandTotal: number;
-  splitCash: number;
-  splitCard: number;
-  splitOnline: number;
-  cashTendered: number;
+  splitCash: string;
+  splitCard: string;
+  splitOnline: string;
+  cashTendered: string;
   cashChange: number;
   isReturnMode: boolean;
   taxType: string;
   companyName: string;
   companyState?: string;
-  companyGstin?: string;
   companyAddress?: string;
+  companyGstin?: string;
   companyEmail?: string;
   userName: string;
 }
-
-interface CartItem {
-  id: string; // cart line id
-  item: ItemMaster;
-  qty: number;
-  rate: number;
-  discount_percent: number;
-  discount_amount: number;
-  tax_percent: number;
-  tax_amount: number;
-  amount: number; // qty * rate - discount
-  net_amount: number; // amount + tax
-  batch_id?: string | null;
-  batch_number?: string | null; // display label
-  batch_allocations?: any[];
-}
-
-type PaymentMethod = 'cash' | 'card' | 'online';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -198,7 +185,23 @@ function recalcLineByAmount(line: CartItem, discountAmt: number): CartItem {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const POSScreen = () => {
+export interface POSScreenProps {
+  voucherId?: string;
+  viewOnly?: boolean;
+  isEditMode?: boolean;
+  onClose?: () => void;
+  hideSidebar?: boolean;
+  autoPrint?: boolean;
+}
+
+const POSScreen = ({
+  voucherId: propVoucherId,
+  viewOnly: propViewOnly,
+  isEditMode: propIsEditMode,
+  onClose,
+  hideSidebar,
+  autoPrint,
+}: POSScreenProps = {}) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
@@ -211,9 +214,18 @@ const POSScreen = () => {
   const discountEntryMode: 'percent' | 'amount' =
     selectedCompany?.settings?.discount_entry_mode === 'amount' ? 'amount' : 'percent';
 
-  // ── Edit mode (from URL ?edit=voucherId)
-  const editVoucherId = new URLSearchParams(location.search).get('edit') || null;
-  const isEditMode = !!editVoucherId;
+  // ── Edit mode (from URL ?edit=voucherId&mode=edit)
+  const params = new URLSearchParams(location.search);
+  const editVoucherId = propVoucherId || params.get('edit') || null;
+  // If ?mode=edit is present, always treat as edit mode (for held bills)
+  const isEditMode = typeof propIsEditMode === 'boolean'
+    ? propIsEditMode
+    : (!!editVoucherId && (params.get('mode') === 'edit' || !params.get('mode')));
+  // ── View-only mode: true if viewing a voucher (not editing, not new, just viewing)
+  const viewVoucherId = propVoucherId || params.get('view') || null;
+  const isViewOnly = typeof propViewOnly === 'boolean'
+    ? propViewOnly
+    : (!!viewVoucherId && !isEditMode);
 
   // ── Data state
   const [posTypes, setPosTypes] = useState<PosVoucherType[]>([]);
@@ -354,12 +366,13 @@ const POSScreen = () => {
       });
   }, [selectedType, selectedCompany]);
 
-  // ── Load existing voucher in edit mode (once items + posTypes are ready)
+  // ── Load existing voucher in edit or view mode (once items + posTypes are ready)
   useEffect(() => {
-    if (!isEditMode || !editVoucherId || !items.length || !posTypes.length) return;
+    const voucherId = isEditMode ? editVoucherId : (isViewOnly ? viewVoucherId : null);
+    if (!voucherId || !items.length || !posTypes.length) return;
     const load = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/vouchers/${editVoucherId}`);
+        const res = await fetch(`${API_BASE_URL}/vouchers/${voucherId}`);
         const json = await res.json();
         if (!json.success) throw new Error(json.message || 'Failed to load voucher');
         const v = json.data;
@@ -387,7 +400,7 @@ const POSScreen = () => {
             const itemMaster = items.find(i => i.id === d.item_id);
             if (!itemMaster) return null;
             return {
-              id: `edit-${d.item_id}-${idx}`,
+              id: `${isEditMode ? 'edit' : 'view'}-${d.item_id}-${idx}`,
               item: itemMaster,
               qty: Number(d.quantity || 1),
               rate: Number(d.rate || 0),
@@ -409,7 +422,7 @@ const POSScreen = () => {
       }
     };
     load();
-  }, [isEditMode, editVoucherId, items.length, posTypes.length]);
+  }, [isEditMode, isViewOnly, editVoucherId, viewVoucherId, items.length, posTypes.length]);
 
   // ── Cart helpers
   const addToCart = (item: ItemMaster) => {
@@ -590,11 +603,10 @@ const POSScreen = () => {
     }
     setSaving(true);
     try {
+
+      // Build details array robustly, ensure all required fields
       const details = cart.map(l => ({
         item_id: l.item.id,
-        batch_id: l.batch_id || null,
-        batch_number: l.batch_number || null,
-        batch_allocations: l.batch_allocations || [],
         quantity: l.qty,
         rate: l.rate,
         amount: l.amount,
@@ -603,7 +615,16 @@ const POSScreen = () => {
         tax_percent: l.tax_percent,
         tax_amount: l.tax_amount,
         net_amount: l.net_amount,
-      }));
+        batch_id: l.batch_id || null,
+        batch_number: l.batch_number || null,
+        batch_allocations: Array.isArray(l.batch_allocations) ? l.batch_allocations : [],
+      })).filter(d => d.item_id && d.quantity > 0);
+
+      if (!Array.isArray(details) || details.length === 0) {
+        toast({ title: 'Validation', description: 'No valid items in cart to save.', variant: 'destructive' });
+        setSaving(false);
+        return;
+      }
 
       // Held voucher: no payment, no ledger entries needed
       const holdPayload = {
@@ -636,6 +657,14 @@ const POSScreen = () => {
       if (!json.success) throw new Error(json.message || 'Failed to hold');
 
       toast({ title: 'Held', description: `POS bill ${voucherNumber} put on hold.` });
+      // Refresh held bills list after holding (do not auto-open dialog)
+      try {
+        const res = await fetch(`${API_BASE_URL}/vouchers/report/held-pos?companyId=${selectedCompany?.id}`);
+        const json = await res.json();
+        setHoldVouchers(json.data || []);
+      } catch {
+        // Ignore errors here, user can still open manually
+      }
       clearCart();
       setNarration('');
       setOriginalDocId('');
@@ -862,10 +891,10 @@ const POSScreen = () => {
         totalDiscount,
         totalTax,
         grandTotal,
-        splitCash,
-        splitCard,
-        splitOnline,
-        cashTendered: cashTenderedNum,
+        splitCash: String(splitAmounts.cash),
+        splitCard: String(splitAmounts.card),
+        splitOnline: String(splitAmounts.online),
+        cashTendered: String(cashTendered),
         cashChange,
         isReturnMode,
         taxType,
@@ -900,7 +929,34 @@ const POSScreen = () => {
 
   // ── Thermal receipt print
   const handlePrintReceipt = () => {
-    const d = lastSaleData;
+    // Always print the current voucher in POS format, even in view-only or edit mode
+    let d: ReceiptData | null = lastSaleData;
+    // If in view-only or edit mode and lastSaleData is not set, build from current state
+    if ((isViewOnly || isEditMode) && !lastSaleData) {
+      d = {
+        voucherNumber,
+        voucherDate,
+        voucherTypeName: selectedType?.name || 'POS Sales',
+        cart: [...cart],
+        subtotal,
+        totalDiscount,
+        totalTax,
+        grandTotal,
+        splitCash: String(splitAmounts.cash),
+        splitCard: String(splitAmounts.card),
+        splitOnline: String(splitAmounts.online),
+        cashTendered: String(cashTendered),
+        cashChange: cashTendered && splitAmounts.cash ? Math.max(0, Number(cashTendered) - Number(splitAmounts.cash)) : 0,
+        isReturnMode,
+        taxType,
+        companyName: selectedCompany?.name || '',
+        companyState: selectedCompany?.state,
+        companyAddress: selectedCompany?.address,
+        companyGstin: selectedCompany?.tax_registration_number,
+        companyEmail: selectedCompany?.settings?.company_email,
+        userName: currentUser?.username || '',
+      };
+    }
     if (!d) return;
 
     // Indian state GST codes
@@ -1018,15 +1074,15 @@ const POSScreen = () => {
       const st = italic ? ' style="font-style:italic;"' : '';
       return `<tr${st}><td class="plbl">${label}</td><td class="pcolon">:</td><td class="pamt">${fmtAmt(amt)}</td></tr>`;
     };
-    if (d.splitCash > 0) {
-      payRowsHtml += payRow('Cash', d.splitCash);
-      if (d.cashTendered > 0) {
-        payRowsHtml += payRow('Cash Tendered', d.cashTendered);
+    if (Number(d.splitCash) > 0) {
+      payRowsHtml += payRow('Cash', Number(d.splitCash));
+      if (Number(d.cashTendered) > 0) {
+        payRowsHtml += payRow('Cash Tendered', Number(d.cashTendered));
         payRowsHtml += payRow('Balance', d.cashChange, true);
       }
     }
-    if (d.splitCard   > 0) payRowsHtml += payRow('Card',   d.splitCard);
-    if (d.splitOnline > 0) payRowsHtml += payRow('Online', d.splitOnline);
+    if (Number(d.splitCard) > 0) payRowsHtml += payRow('Card', Number(d.splitCard));
+    if (Number(d.splitOnline) > 0) payRowsHtml += payRow('Online', Number(d.splitOnline));
 
     // ── HTML ───────────────────────────────────────────────────────────────────
     const html = `<!DOCTYPE html>
@@ -1206,6 +1262,7 @@ const POSScreen = () => {
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       {/* ── Top bar */}
+
       <header className="flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b bg-card shadow-sm">
         <Button variant="ghost" size="icon" onClick={() => navigate('/dashboard')}>
           <ArrowLeft className="h-4 w-4" />
@@ -1215,6 +1272,20 @@ const POSScreen = () => {
           <span className="font-semibold text-lg">POS</span>
           {selectedCompany && <span className="text-muted-foreground text-sm">— {selectedCompany.name}</span>}
         </div>
+        {/* Print Receipt button only in view or edit mode */}
+        {(isViewOnly || isEditMode) && (
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              onClick={handlePrintReceipt}
+              title="Print Receipt"
+            >
+              <Printer className="h-4 w-4" /> Print Receipt
+            </Button>
+          </div>
+        )}
 
         {/* Voucher type selector */}
         {posTypes.length > 1 && (
@@ -1255,25 +1326,27 @@ const POSScreen = () => {
                   const orig = json?.data;
                   if (!orig) return;
                   const itemDetails = (orig.details || []).filter((d: any) => !!d.item_id);
-                  const cartLines: CartItem[] = itemDetails.map((d: any, idx: number) => {
-                    const itemMaster = items.find(i => i.id === d.item_id);
-                    if (!itemMaster) return null;
-                    return {
-                      id: `ret-${d.item_id}-${idx}`,
-                      item: itemMaster,
-                      qty: Number(d.quantity || 1),
-                      rate: Number(d.rate || 0),
-                      discount_percent: Number(d.discount_percent || 0),
-                      discount_amount: Number(d.discount_amount || 0),
-                      tax_percent: Number(d.tax_percent || 0),
-                      tax_amount: Number(d.tax_amount || 0),
-                      amount: Number(d.amount || 0),
-                      net_amount: Number(d.net_amount || 0),
-                      batch_id: null,
-                      batch_number: null,
-                      batch_allocations: [],
-                    } as CartItem;
-                  }).filter(Boolean) as CartItem[];
+                  const cartLines: CartItem[] = itemDetails
+                    .map((d: any, idx: number) => {
+                      const itemMaster = items.find(i => i.id === d.item_id);
+                      if (!itemMaster) return null;
+                      return {
+                        id: `ret-${d.item_id}-${idx}`,
+                        item: itemMaster,
+                        qty: Number(d.quantity || 1),
+                        rate: Number(d.rate || 0),
+                        discount_percent: Number(d.discount_percent || 0),
+                        discount_amount: Number(d.discount_amount || 0),
+                        tax_percent: Number(d.tax_percent || 0),
+                        tax_amount: Number(d.tax_amount || 0),
+                        amount: Number(d.amount || 0),
+                        net_amount: Number(d.net_amount || 0),
+                        batch_id: null,
+                        batch_number: null,
+                        batch_allocations: [],
+                      } as CartItem;
+                    })
+                    .filter(Boolean) as CartItem[];
                   setCart(cartLines);
                 } catch (e) {
                   console.error('Failed to load original POS voucher', e);
@@ -1341,32 +1414,33 @@ const POSScreen = () => {
       {/* ── Main area: items grid + cart */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ── Left: Item grid */}
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden border-r">
-          {/* Search bar */}
-          <div className="flex-shrink-0 flex gap-2 px-3 pt-3 pb-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
-              <Input
-                ref={searchRef}
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search or Scan Barcode…"
-                className="pl-8 h-8 text-sm"
-              />
+        {/* ── Left: Item grid (hidden in view-only mode) */}
+        {!isViewOnly && (
+          <div className="flex flex-col flex-1 min-w-0 overflow-hidden border-r">
+            {/* Search bar */}
+            <div className="flex-shrink-0 flex gap-2 px-3 pt-3 pb-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  ref={searchRef}
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search or Scan Barcode…"
+                  className="pl-8 h-8 text-sm"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs flex-shrink-0"
+                onClick={() => setQuickCreateItemOpen(true)}
+                title="Create new item"
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                New Item
+              </Button>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 px-2 text-xs flex-shrink-0"
-              onClick={() => setQuickCreateItemOpen(true)}
-              title="Create new item"
-            >
-              <Plus className="h-3.5 w-3.5 mr-1" />
-              New Item
-            </Button>
-          </div>
 
           {/* Stock Group filter pills */}
           {groups.length > 0 && (
@@ -1489,7 +1563,7 @@ const POSScreen = () => {
             )}
           </div>
         </div>
-
+        )}
         {/* ── Right: Cart + payment */}
         <div className="w-80 xl:w-96 flex-shrink-0 flex flex-col overflow-hidden bg-card">
           {/* Cart header */}
@@ -1500,7 +1574,7 @@ const POSScreen = () => {
                 {isReturnMode ? 'Return' : 'Bill'} ({cart.length} item{cart.length !== 1 ? 's' : ''})
               </span>
             </div>
-            {cart.length > 0 && (
+            {!isViewOnly && cart.length > 0 && (
               <Button variant="ghost" size="sm" className="text-xs text-destructive h-6 px-2" onClick={clearCart}>
                 Clear
               </Button>
@@ -1563,36 +1637,38 @@ const POSScreen = () => {
                           </p>
                         )}
                       </div>
-                      {/* Qty controls */}
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button
-                          onClick={() => updateQty(line.id, line.qty - 1)}
-                          disabled={!!(isBatchEnabled && line.item.enable_batches && line.batch_id)}
-                          className="w-6 h-6 rounded border flex items-center justify-center hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
-                          title={isBatchEnabled && line.item.enable_batches && line.batch_id ? 'Change qty via batch (click batch label)' : undefined}
-                        >
-                          <Minus className="h-3 w-3" />
-                        </button>
-                        <span className="text-xs w-5 text-center font-medium">{line.qty}</span>
-                        <button
-                          onClick={() => updateQty(line.id, line.qty + 1)}
-                          disabled={!!(isBatchEnabled && line.item.enable_batches && line.batch_id)}
-                          className="w-6 h-6 rounded border flex items-center justify-center hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
-                          title={isBatchEnabled && line.item.enable_batches && line.batch_id ? 'Change qty via batch (click batch label)' : undefined}
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
-                        <button
-                          onClick={() => removeFromCart(line.id)}
-                          className="w-6 h-6 rounded border flex items-center justify-center hover:bg-destructive/10 text-destructive ml-1"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
+                      {/* Qty controls (hidden in view-only mode) */}
+                      {!isViewOnly && (
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => updateQty(line.id, line.qty - 1)}
+                            disabled={!!(isBatchEnabled && line.item.enable_batches && line.batch_id)}
+                            className="w-6 h-6 rounded border flex items-center justify-center hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={isBatchEnabled && line.item.enable_batches && line.batch_id ? 'Change qty via batch (click batch label)' : undefined}
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                          <span className="text-xs w-5 text-center font-medium">{line.qty}</span>
+                          <button
+                            onClick={() => updateQty(line.id, line.qty + 1)}
+                            disabled={!!(isBatchEnabled && line.item.enable_batches && line.batch_id)}
+                            className="w-6 h-6 rounded border flex items-center justify-center hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={isBatchEnabled && line.item.enable_batches && line.batch_id ? 'Change qty via batch (click batch label)' : undefined}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                          <button
+                            onClick={() => removeFromCart(line.id)}
+                            className="w-6 h-6 rounded border flex items-center justify-center hover:bg-destructive/10 text-destructive ml-1"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                     {/* Discount */}
                     <div className="flex items-center gap-1 mt-1">
-                      {showDiscountColumn && (
+                      {showDiscountColumn && !isViewOnly && (
                         <>
                           <Label className="text-[10px] text-muted-foreground">Disc%</Label>
                           <Input
@@ -1626,8 +1702,7 @@ const POSScreen = () => {
               </div>
             )}
           </div>
-
-          {/* Totals + pay button */}
+          {/* Totals + payment summary + print button in view-only mode */}
           <div className="flex-shrink-0 border-t bg-card">
             <div className="px-4 py-3 space-y-1">
               <div className="flex justify-between text-sm">
@@ -1652,50 +1727,86 @@ const POSScreen = () => {
               </div>
             </div>
 
-            {/* Against original POS moved to header */}
-
-            {/* Narration */}
-            <div className="px-3 pb-2">
-              <Input
-                value={narration}
-                onChange={e => setNarration(e.target.value)}
-                placeholder="Narration (optional)"
-                className="h-7 text-xs"
-              />
-            </div>
-
-            <div className="px-3 pb-3 flex flex-col gap-2">
-              {/* Hold button: save without payment — new sales only (not edit mode) */}
-              {!isReturnMode && !isEditMode && (
-                <Button
-                  variant="outline"
-                  className="w-full h-9 text-sm font-medium border-amber-400 text-amber-600 hover:bg-amber-50"
-                  disabled={cart.length === 0 || saving}
-                  onClick={handleHold}
-                >
-                  {saving && isHold ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  Hold Bill — {currencySymbol}{fmt(grandTotal)}
+            {/* Payment summary and print button in view-only mode */}
+            {isViewOnly ? (
+              <div className="px-4 pb-3 pt-2 flex flex-col gap-2">
+                <div className="rounded border bg-muted/30 p-2">
+                  <div className="font-semibold text-xs mb-1">Payment Details</div>
+                  {Number(splitAmounts.cash) > 0 && (
+                    <div className="flex justify-between text-xs"><span>Cash</span><span>{currencySymbol}{fmt(Number(splitAmounts.cash))}</span></div>
+                  )}
+                  {Number(cashTendered) > 0 && (
+                    <div className="flex justify-between text-xs pl-2"><span>Tendered</span><span>{currencySymbol}{fmt(Number(cashTendered))}</span></div>
+                  )}
+                  {Number(cashTendered) > 0 && Number(splitAmounts.cash) > 0 && Number(cashTendered) - Number(splitAmounts.cash) > 0 && (
+                    <div className="flex justify-between text-xs pl-2"><span>Change</span><span>{currencySymbol}{fmt(Number(cashTendered) - Number(splitAmounts.cash))}</span></div>
+                  )}
+                  {Number(splitAmounts.card) > 0 && (
+                    <div className="flex justify-between text-xs"><span>Card</span><span>{currencySymbol}{fmt(Number(splitAmounts.card))}</span></div>
+                  )}
+                  {cardRef && Number(splitAmounts.card) > 0 && (
+                    <div className="flex justify-between text-xs pl-2"><span>Card Ref</span><span>{cardRef}</span></div>
+                  )}
+                  {Number(splitAmounts.online) > 0 && (
+                    <div className="flex justify-between text-xs"><span>Online</span><span>{currencySymbol}{fmt(Number(splitAmounts.online))}</span></div>
+                  )}
+                  {onlineRef && Number(splitAmounts.online) > 0 && (
+                    <div className="flex justify-between text-xs pl-2"><span>Online Ref</span><span>{onlineRef}</span></div>
+                  )}
+                </div>
+                <Button variant="outline" className="w-full" onClick={handlePrintReceipt}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print Receipt
                 </Button>
-              )}
-              <Button
-                className="w-full h-10 text-base font-semibold"
-                disabled={cart.length === 0 || saving || !isPosConfigured}
-                onClick={openSettleDialog}
-                variant={isReturnMode ? 'destructive' : 'default'}
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                {isReturnMode ? 'Process Return' : 'Settle Bill'} — {currencySymbol}{fmt(grandTotal)}
-              </Button>
-            </div>
+              </div>
+            ) : (
+              <>
+                {/* Narration */}
+                <div className="px-3 pb-2">
+                  <Input
+                    value={narration}
+                    onChange={e => setNarration(e.target.value)}
+                    placeholder="Narration (optional)"
+                    className="h-7 text-xs"
+                  />
+                </div>
+                <div className="px-3 pb-3 flex flex-col gap-2">
+                  {/* Hold button: save without payment — new sales only (not edit mode) */}
+                  {!isReturnMode && !isEditMode && (
+                    <Button
+                      variant="outline"
+                      className="w-full h-9 text-sm font-medium border-amber-400 text-amber-600 hover:bg-amber-50"
+                      disabled={cart.length === 0 || saving}
+                      onClick={handleHold}
+                    >
+                      {saving && isHold ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      Hold Bill — {currencySymbol}{fmt(grandTotal)}
+                    </Button>
+                  )}
+                  <Button
+                    className="w-full h-10 text-base font-semibold"
+                    disabled={cart.length === 0 || saving || !isPosConfigured}
+                    onClick={openSettleDialog}
+                    variant={isReturnMode ? 'destructive' : 'default'}
+                  >
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    {isReturnMode ? 'Process Return' : 'Settle Bill'} — {currencySymbol}{fmt(grandTotal)}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* ── Payment Dialog */}
       <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent aria-describedby={undefined} className="max-w-sm">
           <DialogHeader>
             <DialogTitle>{isReturnMode ? 'Refund Settlement' : 'Payment Settlement'}</DialogTitle>
+            /*<DialogDescription>
+              Enter payment details and confirm settlement for this bill.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
@@ -1878,13 +1989,16 @@ const POSScreen = () => {
         }}
       />
 
-      {/* ── Hold Bills Dialog: list of held (optional) POS vouchers */}
+      {/* ── Hold Bills Dialog: list of held (on-hold) POS vouchers */}
       <Dialog open={retakeDialogOpen} onOpenChange={setRetakeDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent aria-describedby={undefined} className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <RotateCcw className="h-4 w-4 text-amber-500" /> Hold Bills
             </DialogTitle>
+            <DialogDescription>
+              List of all held (on-hold) POS bills for this company. Select a bill to retake or settle.
+            </DialogDescription>
           </DialogHeader>
           {holdVouchers.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">No held bills found.</p>
@@ -1905,7 +2019,8 @@ const POSScreen = () => {
                     className="text-xs"
                     onClick={() => {
                       setRetakeDialogOpen(false);
-                      navigate(`/pos?edit=${v.id}`);
+                      // Always open as POS edit mode for held POS bills
+                      navigate(`/pos?edit=${v.id}&mode=edit`);
                     }}
                   >
                     Open
@@ -1922,7 +2037,13 @@ const POSScreen = () => {
 
       {/* ── Success Dialog */}
       <Dialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen}>
-        <DialogContent className="max-w-sm text-center">
+        <DialogContent aria-describedby={undefined}className="max-w-sm text-center">
+            <DialogTitle className="flex items-center gap-2">
+              <RotateCcw className="h-4 w-4 text-amber-500" /> Hold Bills
+            </DialogTitle>
+          <DialogDescription>
+            Bill saved successfully. You can print or start a new bill.
+          </DialogDescription>
           <div className="flex flex-col items-center gap-4 py-4">
             <CheckCircle2 className="h-16 w-16 text-green-500" />
             <div>

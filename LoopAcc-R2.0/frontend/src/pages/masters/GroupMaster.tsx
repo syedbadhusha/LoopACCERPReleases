@@ -4,16 +4,19 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { API_BASE_URL } from '@/config/runtime';
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import SearchableDropdown from '@/components/ui/searchable-dropdown';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Plus, Edit, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Edit, Trash2, Eye } from 'lucide-react';
+import { usePermissions } from '@/contexts/PermissionContext';
 import { useToast } from '@/hooks/use-toast';
 import { useCompany } from '@/contexts/CompanyContext';
 
@@ -28,13 +31,16 @@ const GroupMaster = () => {
   const [parentGroups, setParentGroups] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingGroup, setEditingGroup] = useState<any>(null);
-  
+  const [viewOnly, setViewOnly] = useState(false);
+
   const [formData, setFormData] = useState({
     name: '',
     group_type: '',
     parent_group_id: 'none',
     is_default: false
   });
+
+  const { can } = usePermissions();
 
   const groupTypes = [
     'Asset',
@@ -58,7 +64,7 @@ const GroupMaster = () => {
     if (!selectedCompany) return;
     
     try {
-      const res = await fetch(`http://localhost:5000/api/groups?companyId=${selectedCompany.id}`);
+      const res = await fetch(`${API_BASE_URL}/groups?companyId=${selectedCompany.id}`);
       const json = await res.json();
       if (!json.success) {
         console.error('Error fetching groups:', json.message || json);
@@ -116,7 +122,8 @@ const GroupMaster = () => {
     setShowForm(false);
   };
 
-  const handleEdit = (group: any) => {
+  const handleEdit = (group: any, opts?: { viewOnly?: boolean }) => {
+    setViewOnly(!!opts?.viewOnly);
     setFormData({
       name: group.name,
       group_type: group.group_type,
@@ -160,7 +167,7 @@ const GroupMaster = () => {
       };
 
       if (editingGroup) {
-        const resp = await fetch(`http://localhost:5000/api/groups/${editingGroup.id}`, {
+        const resp = await fetch(`${API_BASE_URL}/groups/${editingGroup.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(dataToSave)
@@ -169,7 +176,7 @@ const GroupMaster = () => {
         if (!json.success) throw new Error(json.message || 'Update failed');
         toast({ title: "Success", description: "Group updated successfully!" });
       } else {
-        const resp = await fetch(`http://localhost:5000/api/groups`, {
+        const resp = await fetch(`${API_BASE_URL}/groups`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(dataToSave)
@@ -213,7 +220,7 @@ const GroupMaster = () => {
     if (!confirm('Are you sure you want to delete this group?')) return;
 
     try {
-      const resp = await fetch(`http://localhost:5000/api/groups/${id}`, { method: 'DELETE' });
+      const resp = await fetch(`${API_BASE_URL}/groups/${id}`, { method: 'DELETE' });
       const json = await resp.json();
       if (!json.success) throw new Error(json.message || 'Delete failed');
       toast({ title: "Success", description: "Group deleted successfully!" });
@@ -241,7 +248,6 @@ const GroupMaster = () => {
       </div>
     );
   }
-
   return (
     <div className="bg-background h-screen flex flex-col overflow-hidden">
       <div className="flex-shrink-0 bg-background border-b shadow-sm">
@@ -255,19 +261,22 @@ const GroupMaster = () => {
               <p className="text-sm text-muted-foreground">{selectedCompany.name}</p>
             </div>
           </div>
-          <Button onClick={() => setShowForm(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Group
-          </Button>
+          {can && can('master_group_create') && (
+            <Button onClick={() => setShowForm(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Group
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-6">
 
         <Dialog open={showForm} onOpenChange={(open) => { if (!open) resetForm(); }}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent aria-description="undefined" className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>{editingGroup ? 'Edit Group' : 'Add New Group'}</DialogTitle>
+              <DialogTitle>{viewOnly ? 'View Group' : editingGroup ? 'Edit Group' : 'Add New Group'}</DialogTitle>
+              <DialogDescription>Fill all required group details and save.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -278,6 +287,7 @@ const GroupMaster = () => {
                       onChange={(e) => setFormData({...formData, name: e.target.value})}
                       placeholder="Enter group name"
                       required
+                      readOnly={viewOnly}
                     />
                   </div>
 
@@ -285,21 +295,18 @@ const GroupMaster = () => {
                     <Label>Parent Group</Label>
                     <SearchableDropdown
                       value={formData.parent_group_id} 
-                      onValueChange={(value) => {
+                      onValueChange={viewOnly ? undefined : (value) => {
                         if (value === 'none') {
-                          // When parent is deselected, clear group type to allow manual selection
                           setFormData({
                             ...formData,
                             parent_group_id: value,
                             group_type: ''
                           });
                         } else {
-                          // When parent is selected, inherit its group type
                           const selectedGroup = parentGroups.find(g => g.id === value);
                           const inheritedType = selectedGroup
                             ? (selectedGroup.group_type || (selectedGroup.nature as string) || '')
                             : '';
-
                           setFormData({
                             ...formData,
                             parent_group_id: value,
@@ -315,6 +322,7 @@ const GroupMaster = () => {
                           label: group.name,
                         })),
                       ]}
+                      disabled={viewOnly}
                     />
                   </div>
 
@@ -328,9 +336,10 @@ const GroupMaster = () => {
                     ) : (
                       <SearchableDropdown
                         value={formData.group_type}
-                        onValueChange={(value) => setFormData({ ...formData, group_type: value })}
+                        onValueChange={viewOnly ? undefined : (value) => setFormData({ ...formData, group_type: value })}
                         placeholder="Select Group Type"
                         options={groupTypes.map((type) => ({ value: type, label: type }))}
+                        disabled={viewOnly}
                       />
                     )}
                   </div>
@@ -364,9 +373,11 @@ const GroupMaster = () => {
                   <Button type="button" variant="outline" onClick={resetForm}>
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={loading}>
-                    {loading ? 'Saving...' : (editingGroup ? 'Update' : 'Save')}
-                  </Button>
+                  {!viewOnly && (
+                    <Button type="submit" disabled={loading}>
+                      {loading ? 'Saving...' : (editingGroup ? 'Update' : 'Save')}
+                    </Button>
+                  )}
                 </DialogFooter>
             </form>
           </DialogContent>
@@ -395,11 +406,18 @@ const GroupMaster = () => {
                     <TableCell>{group.is_default ? 'Yes' : 'No'}</TableCell>
                     <TableCell>
                       <div className="flex space-x-2">
-                        <Button variant="outline" size="sm" onClick={() => handleEdit(group)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        {!group.is_default && (
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(group.id)}>
+                        {can && can('master_group_view') && (
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(group, { viewOnly: true })} title="View">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {can && can('master_group_edit') && (
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(group)} title="Edit">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {can && can('master_group_delete') && !group.is_default && (
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(group.id)} title="Delete">
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         )}

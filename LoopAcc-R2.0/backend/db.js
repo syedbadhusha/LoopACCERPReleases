@@ -10,6 +10,9 @@ dotenv.config();
 const mongoUri = process.env.MONGODB_URI;
 const mongoDbName = process.env.MONGODB_DB_NAME || "tally_clone";
 const authDbName = process.env.AUTH_DB_NAME || "loopacc_auth";
+// Separate URI for the loopacc_auth database (ERP Licensing / User Registry).
+// When set, auth data is stored on a completely different MongoDB host.
+const authMongoUri = process.env.AUTH_MONGODB_URI || null;
 const mongoDirectUri = process.env.MONGODB_DIRECT_URI;
 const mongoFallbackUri =
   process.env.MONGODB_FALLBACK_URI ||
@@ -28,9 +31,11 @@ if (!mongoUri) {
 }
 
 let client;
+let authClient;   // Separate client for loopacc_auth when AUTH_MONGODB_URI is set.
 let db;
 let authDb;
 let connectPromise;
+let authConnectPromise;
 
 function readLocalStore(filePath = localDbFilePath) {
   try {
@@ -233,9 +238,49 @@ async function connectWithUri(uri, label) {
   await nextClient.connect();
   client = nextClient;
   db = client.db(mongoDbName);
-  authDb = client.db(authDbName);
-  console.log(`✓ Connected to MongoDB (${label}): ${mongoDbName} | auth: ${authDbName}`);
+  // Only set authDb from this connection when there is no dedicated AUTH_MONGODB_URI.
+  if (!authMongoUri) {
+    authDb = client.db(authDbName);
+    console.log(`✓ Connected to MongoDB (${label}): ${mongoDbName} | auth: ${authDbName} (shared connection)`);
+  } else {
+    console.log(`✓ Connected to MongoDB (${label}): ${mongoDbName}`);
+  }
   return db;
+}
+
+/**
+ * Connect the dedicated loopacc_auth client using AUTH_MONGODB_URI.
+ * Runs in parallel with the main ERP connection.
+ */
+async function connectAuthClient() {
+  if (authDb) return authDb;
+  if (authConnectPromise) return authConnectPromise;
+
+  authConnectPromise = (async () => {
+    try {
+      const nextAuthClient = createMongoClient(authMongoUri);
+      await nextAuthClient.connect();
+      authClient = nextAuthClient;
+      authDb = authClient.db(authDbName);
+      console.log(`✓ Connected to loopacc_auth MongoDB (AUTH_MONGODB_URI): ${authDbName}`);
+      return authDb;
+    } catch (err) {
+      if (allowLocalFallback) {
+        authDb = createLocalDb(localAuthDbFilePath);
+        console.warn(
+          `loopacc_auth MongoDB unavailable (${err.message}). Using local file DB fallback at ${localAuthDbFilePath}`,
+        );
+        return authDb;
+      }
+      throw new Error(`Failed to connect to loopacc_auth database: ${err.message}`);
+    }
+  })();
+
+  try {
+    return await authConnectPromise;
+  } finally {
+    authConnectPromise = null;
+  }
 }
 
 export async function connectToMongo() {
@@ -247,7 +292,10 @@ export async function connectToMongo() {
 
   connectPromise = (async () => {
     try {
-      return await connectWithUri(mongoUri, "primary URI");
+      const result = await connectWithUri(mongoUri, "primary URI");
+      // If a separate auth URI is configured, connect it in parallel.
+      if (authMongoUri) await connectAuthClient();
+      return result;
     } catch (primaryError) {
       const canRetryWithPublicDns =
         mongoUri?.startsWith("mongodb+srv://") && isSrvLookupError(primaryError);
@@ -258,7 +306,9 @@ export async function connectToMongo() {
         );
 
         try {
-          return await connectWithPublicDns(mongoUri);
+          const result = await connectWithPublicDns(mongoUri);
+          if (authMongoUri) await connectAuthClient();
+          return result;
         } catch (dnsRetryError) {
           console.warn(
             `Public DNS retry failed (${dnsRetryError.message}). Falling back to alternate URI if configured...`,
@@ -282,7 +332,9 @@ export async function connectToMongo() {
         );
 
         try {
-          return await connectWithUri(mongoDirectUri, "direct URI fallback");
+          const result = await connectWithUri(mongoDirectUri, "direct URI fallback");
+          if (authMongoUri) await connectAuthClient();
+          return result;
         } catch (directError) {
           console.warn(
             `Direct URI fallback failed (${directError.message}). Continuing with other fallbacks...`,
@@ -307,7 +359,9 @@ export async function connectToMongo() {
       );
 
       try {
-        return await connectWithUri(mongoFallbackUri, "fallback URI");
+        const result = await connectWithUri(mongoFallbackUri, "fallback URI");
+        if (authMongoUri) await connectAuthClient();
+        return result;
       } catch (fallbackError) {
         if (allowLocalFallback) {
           db = createLocalDb();
@@ -615,6 +669,7 @@ export async function initializeDatabase() {
     const required = [
       "companies",
       "company_users",
+      "roles",
       "groups",
       "ledgers",
       "item_master",
@@ -650,6 +705,9 @@ export async function initializeDatabase() {
     await database
       .collection("company_users")
       .createIndex({ company_id: 1, username: 1 }, { unique: true });
+    await database
+      .collection("roles")
+      .createIndex({ company_id: 1, name: 1 }, { unique: true });
     await database
       .collection("batch_allocation")
       .createIndex(
@@ -712,11 +770,30 @@ export async function initializeAuthDatabase() {
       console.log("Created collection: users");
     }
 
+    if (!names.includes("licenses")) {
+      await userDatabase.createCollection("licenses");
+      console.log("Created collection: licenses");
+    }
+
+    // email is NOT unique — same email can exist across multiple licenses
+    // Use a compound unique index on (email + license_id) to prevent duplicate sub-user records
     await userDatabase
       .collection("users")
-      .createIndex({ email: 1 }, { unique: true });
+      .createIndex({ email: 1, license_id: 1 }, { unique: true });
 
-    console.log("✓ Auth database (users) collection and indexes are ready");
+    await userDatabase
+      .collection("users")
+      .createIndex({ session_token: 1 }, { sparse: true });
+
+    await userDatabase
+      .collection("licenses")
+      .createIndex({ id: 1 }, { unique: true });
+
+    await userDatabase
+      .collection("licenses")
+      .createIndex({ owner_user_id: 1 });
+
+    console.log("✓ Auth database (users + licenses) collections and indexes are ready");
   } catch (err) {
     console.error("Auth database initialization error:", err.message || err);
     throw err;

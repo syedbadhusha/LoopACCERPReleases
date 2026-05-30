@@ -68,17 +68,19 @@ const valueColumnStyle = { minWidth: '170px', whiteSpace: 'nowrap' as const };
 const BatchSummaryReport = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
 
   const queryItemId = searchParams.get('itemId') || '';
   const queryDateFrom = searchParams.get('dateFrom') || '';
   const queryDateTo = searchParams.get('dateTo') || '';
 
   const [selectedItemId, setSelectedItemId] = useState(queryItemId);
-  const [dateFrom, setDateFrom] = useState(
-    queryDateFrom || format(new Date(new Date().getFullYear(), 3, 1), 'yyyy-MM-dd'),
-  );
-  const [dateTo, setDateTo] = useState(queryDateTo || format(new Date(), 'yyyy-MM-dd'));
+  const [dateFrom, setDateFrom] = useState(queryDateFrom || periodFrom);
+  const [dateTo, setDateTo] = useState(queryDateTo || periodTo);
+
+  // Sync with global period when it changes (unless URL param override)
+  useEffect(() => { if (!queryDateFrom) setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { if (!queryDateTo) setDateTo(periodTo); }, [periodTo]);
 
   const [items, setItems] = useState<any[]>([]);
   const [rows, setRows] = useState<BatchLine[]>([]);
@@ -122,176 +124,146 @@ const BatchSummaryReport = () => {
     buildBatchSummary();
   }, [selectedCompany, selectedItemId, dateFrom, dateTo]);
 
+  // Refactored to use StockItemVouchersReport logic for batch-wise calculation
   const buildBatchSummary = async () => {
     if (!selectedCompany || !selectedItemId) return;
     setLoading(true);
-
     try {
-      const [batchResp, voucherResp] = await Promise.all([
+      const [batchResp, voucherResp, itemResp] = await Promise.all([
         fetch(`http://localhost:5000/api/batch-allocations?itemId=${encodeURIComponent(selectedItemId)}&companyId=${encodeURIComponent(selectedCompany.id)}`),
         fetch(`http://localhost:5000/api/vouchers?companyId=${encodeURIComponent(selectedCompany.id)}`),
+        fetch(`http://localhost:5000/api/items?companyId=${encodeURIComponent(selectedCompany.id)}`),
       ]);
-
-      if (!batchResp.ok || !voucherResp.ok) {
-        throw new Error('Failed to fetch batch summary data');
-      }
-
+      if (!batchResp.ok || !voucherResp.ok || !itemResp.ok) throw new Error('Failed to fetch batch summary data');
       const batchJson = await batchResp.json();
       const voucherJson = await voucherResp.json();
-
+      const itemJson = await itemResp.json();
       const batches = Array.isArray(batchJson?.data) ? batchJson.data : [];
       const vouchers = Array.isArray(voucherJson?.data) ? voucherJson.data : [];
-
-      const stateByBatch = new Map<string, BatchState>();
+      const allItems = Array.isArray(itemJson?.data) ? itemJson.data : [];
+      const item = allItems.find((i: any) => String(i?.id || '') === selectedItemId);
+      // For each batch, run the same logic as StockItemVouchersReport for opening, inward, outward, closing
+      const normalDateFrom = dateFrom <= dateTo ? dateFrom : dateTo;
+      const normalDateTo = dateFrom <= dateTo ? dateTo : dateFrom;
+      // Helper to get all batch moves for a line
+      const getBatchMovesForLine = (line: any, batchId: string) => {
+        const allocationSource = Array.isArray(line?.batch_allocations) && line.batch_allocations.length > 0
+          ? line.batch_allocations
+          : Array.isArray(line?.batchallocation) && line.batchallocation.length > 0
+            ? line.batchallocation
+            : Array.isArray(line?.batchAllocation) && line.batchAllocation.length > 0
+              ? line.batchAllocation
+              : [];
+        const moves = allocationSource.length > 0
+          ? allocationSource
+              .map((a: any) => {
+                const bId = String(a?.batch_id || a?.batchId || a?.id || a?._id || '');
+                if (!bId) return null;
+                const qty = Math.abs(money(a?.qty ?? a?.batch_qty ?? a?.quantity));
+                const amount = Math.abs(money(a?.amount || a?.net_amount || (qty * money(a?.rate))));
+                return { batchId: bId, qty, amount };
+              })
+              .filter((m: any) => m && m.qty > 0 && m.batchId === batchId)
+          : (() => {
+              const bId = String(line?.batch_id || line?.batchId || line?.batch?.id || line?.batch?._id || '');
+              if (!bId || bId !== batchId) return [];
+              const qty = Math.abs(money(line?.batch_qty ?? line?.quantity));
+              if (qty <= 0) return [];
+              return [{ batchId: bId, qty, amount: Math.abs(money(line?.amount || line?.net_amount || (qty * money(line?.rate)))) }];
+            })();
+        return moves;
+      };
+      // Build for each batch
+      const batchRows: BatchLine[] = [];
       for (const batch of batches) {
         const batchId = String(batch?.id || '');
         if (!batchId) continue;
-
-        const openingQty = money(batch?.opening_qty);
-        const openingValue = money(batch?.opening_value);
-
-        stateByBatch.set(batchId, {
-          batchId,
-          batchName: String(batch?.batch_number || batch?.name || 'Unnamed Batch'),
-          openingQty,
-          openingValue,
-          purchaseQty: 0,
-          purchaseValue: 0,
-          salesQty: 0,
-          salesValue: 0,
-          closingQty: openingQty,
-          closingValue: openingValue,
-        });
-      }
-
-      const normalizedDateFrom = dateFrom <= dateTo ? dateFrom : dateTo;
-      const normalizedDateTo = dateFrom <= dateTo ? dateTo : dateFrom;
-      const sortedVouchers = [...vouchers].sort((a: any, b: any) => fmtDate(a?.voucher_date).localeCompare(fmtDate(b?.voucher_date)));
-
-      const applyOutward = (state: BatchState, qty: number) => {
-        const avgRate = state.closingQty > 0 ? state.closingValue / state.closingQty : 0;
-        const qtyToReduce = Math.min(state.closingQty, qty);
-        state.closingQty = Math.max(0, state.closingQty - qtyToReduce);
-        state.closingValue = Math.max(0, state.closingValue - (qtyToReduce * avgRate));
-      };
-
-      const applyOutwardOpening = (state: BatchState, qty: number) => {
-        const avgRate = state.openingQty > 0 ? state.openingValue / state.openingQty : 0;
-        const qtyToReduce = Math.min(state.openingQty, qty);
-        state.openingQty = Math.max(0, state.openingQty - qtyToReduce);
-        state.openingValue = Math.max(0, state.openingValue - (qtyToReduce * avgRate));
-      };
-
-      for (const voucher of sortedVouchers) {
-        const voucherDate = fmtDate(voucher?.voucher_date);
-        if (!voucherDate || voucherDate > normalizedDateTo) continue;
-
-        const voucherType = String(voucher?.voucher_type || '').toLowerCase();
-        const isInward = INWARD_TYPES.has(voucherType);
-        const isOutward = OUTWARD_TYPES.has(voucherType);
-        if (!isInward && !isOutward) continue;
-
-        const isBeforePeriod = voucherDate < normalizedDateFrom;
-        const isInPeriod = voucherDate >= normalizedDateFrom && voucherDate <= normalizedDateTo;
-
-        const lines = Array.isArray(voucher?.inventory) && voucher.inventory.length > 0
-          ? voucher.inventory
-          : Array.isArray(voucher?.details)
-            ? voucher.details
-            : [];
-
-        for (const line of lines) {
-          if (String(line?.item_id || '') !== selectedItemId) continue;
-
-          const moves = Array.isArray(line?.batch_allocations) && line.batch_allocations.length > 0
-            ? line.batch_allocations
-                .filter((a: any) => a?.batch_id)
-                .map((a: any) => ({
-                  batchId: String(a?.batch_id || ''),
-                  batchName: String(a?.batch_number || ''),
-                  qty: Math.abs(money(a?.qty)),
-                  amount: Math.abs(money(a?.amount || a?.net_amount || (money(a?.qty) * money(a?.rate)))),
-                }))
-            : line?.batch_id
-              ? [{
-                  batchId: String(line?.batch_id || ''),
-                  batchName: String(line?.batch_number || ''),
-                  qty: Math.abs(money(line?.batch_qty ?? line?.quantity)),
-                  amount: Math.abs(money(line?.amount || line?.net_amount || (money(line?.batch_qty ?? line?.quantity) * money(line?.rate)))),
-                }]
-              : [];
-
-          for (const move of moves) {
-            if (!move.batchId || move.qty <= 0) continue;
-
-            const existing = stateByBatch.get(move.batchId) || {
-              batchId: move.batchId,
-              batchName: move.batchName || 'Unnamed Batch',
-              openingQty: 0,
-              openingValue: 0,
-              purchaseQty: 0,
-              purchaseValue: 0,
-              salesQty: 0,
-              salesValue: 0,
-              closingQty: 0,
-              closingValue: 0,
-            };
-
-            if (isInward) {
-              if (isBeforePeriod) {
-                existing.openingQty += move.qty;
-                existing.openingValue += move.amount;
-              }
-              if (isInPeriod) {
-                existing.purchaseQty += move.qty;
-                existing.purchaseValue += move.amount;
-              }
-              existing.closingQty += move.qty;
-              existing.closingValue += move.amount;
-            } else if (isOutward) {
-              if (isBeforePeriod) {
-                applyOutwardOpening(existing, move.qty);
-              }
-              if (isInPeriod) {
-                existing.salesQty += move.qty;
-                existing.salesValue += move.amount;
-              }
-              applyOutward(existing, move.qty);
+        // Opening
+        let openingQty = money(batch?.opening_qty);
+        let openingValue = (() => {
+          const v = money(batch?.opening_value);
+          if (v !== 0) return v;
+          const fallbackRate = money(item?.rate);
+          return openingQty * fallbackRate;
+        })();
+        // Pass 1: apply pre-period movements to get opening at dateFrom
+        const sorted = [...vouchers].sort((a: any, b: any) => fmtDate(a?.voucher_date).localeCompare(fmtDate(b?.voucher_date)));
+        let preInwardQty = 0, preInwardValue = 0, preOutwardQty = 0, preOutwardValue = 0;
+        for (const v of sorted) {
+          const vDate = fmtDate(v?.voucher_date);
+          if (!vDate || vDate >= normalDateFrom) continue;
+          const vType = String(v?.voucher_type || '').toLowerCase();
+          const isIn = INWARD_TYPES.has(vType);
+          const isOut = OUTWARD_TYPES.has(vType);
+          if (!isIn && !isOut) continue;
+          const lines = Array.isArray(v?.inventory) && v.inventory.length > 0 ? v.inventory : Array.isArray(v?.details) && v.details.length > 0 ? v.details : [];
+          for (const line of lines) {
+            if (String(line?.item_id || '') !== selectedItemId) continue;
+            const batchMoves = getBatchMovesForLine(line, batchId);
+            if (batchMoves.length === 0) continue;
+            const qty = batchMoves.reduce((sum: number, move: any) => sum + Number(move?.qty || 0), 0);
+            if (qty <= 0) continue;
+            const amount = batchMoves.reduce((sum: number, move: any) => sum + Number(move?.amount || 0), 0);
+            if (isIn) {
+              preInwardQty += qty;
+              preInwardValue += amount;
             }
-
-            stateByBatch.set(move.batchId, existing);
+            if (isOut) {
+              preOutwardQty += qty;
+              preOutwardValue += amount;
+            }
           }
         }
+        // Opening after pre-period
+        const opening = {
+          qty: openingQty + preInwardQty - preOutwardQty,
+          value: openingValue + preInwardValue - preOutwardValue,
+        };
+        // Pass 2: accumulate in-period movements
+        let purchaseQty = 0, purchaseValue = 0, salesQty = 0, salesValue = 0;
+        for (const v of sorted) {
+          const vDate = fmtDate(v?.voucher_date);
+          if (!vDate || vDate < normalDateFrom || vDate > normalDateTo) continue;
+          const vType = String(v?.voucher_type || '').toLowerCase();
+          const isIn = INWARD_TYPES.has(vType);
+          const isOut = OUTWARD_TYPES.has(vType);
+          if (!isIn && !isOut) continue;
+          const lines = Array.isArray(v?.inventory) && v.inventory.length > 0 ? v.inventory : Array.isArray(v?.details) && v.details.length > 0 ? v.details : [];
+          for (const line of lines) {
+            if (String(line?.item_id || '') !== selectedItemId) continue;
+            const batchMoves = getBatchMovesForLine(line, batchId);
+            if (batchMoves.length === 0) continue;
+            const qty = batchMoves.reduce((sum: number, move: any) => sum + Number(move?.qty || 0), 0);
+            if (qty <= 0) continue;
+            const amount = batchMoves.reduce((sum: number, move: any) => sum + Number(move?.amount || 0), 0);
+            if (isIn) {
+              purchaseQty += qty;
+              purchaseValue += amount;
+            }
+            if (isOut) {
+              salesQty += qty;
+              salesValue += amount;
+            }
+          }
+        }
+        // Closing = opening + purchase - sales
+        const closingQty = opening.qty + purchaseQty - salesQty;
+        const closingValue = opening.value + purchaseValue - salesValue;
+        batchRows.push({
+          batchId,
+          batchName: String(batch?.batch_number || batch?.name || 'Unnamed Batch'),
+          openingQty: opening.qty,
+          openingValue: opening.value,
+          purchaseQty,
+          purchaseValue,
+          salesQty,
+          salesValue,
+          closingQty,
+          closingValue,
+        });
       }
-
-      const builtRows: BatchLine[] = Array.from(stateByBatch.values())
-        .filter((row) => {
-          const total =
-            Math.abs(row.openingQty) +
-            Math.abs(row.openingValue) +
-            Math.abs(row.purchaseQty) +
-            Math.abs(row.purchaseValue) +
-            Math.abs(row.salesQty) +
-            Math.abs(row.salesValue) +
-            Math.abs(row.closingQty) +
-            Math.abs(row.closingValue);
-          return total > 0.000001;
-        })
-        .sort((a, b) => String(a.batchName).localeCompare(String(b.batchName)))
-        .map((row) => ({
-          batchId: row.batchId,
-          batchName: row.batchName,
-          openingQty: row.openingQty,
-          openingValue: row.openingValue,
-          purchaseQty: row.purchaseQty,
-          purchaseValue: row.purchaseValue,
-          salesQty: row.salesQty,
-          salesValue: row.salesValue,
-          closingQty: row.closingQty,
-          closingValue: row.closingValue,
-        }));
-
-      setRows(builtRows);
+      setRows(batchRows.filter(row => Math.abs(row.openingQty) + Math.abs(row.purchaseQty) + Math.abs(row.salesQty) + Math.abs(row.closingQty) > 0.000001)
+        .sort((a, b) => String(a.batchName).localeCompare(String(b.batchName))));
     } catch (error) {
       console.error('Error building batch summary:', error);
       setRows([]);
@@ -313,8 +285,9 @@ const BatchSummaryReport = () => {
   const totalPurchaseValue = rows.reduce((sum, row) => sum + row.purchaseValue, 0);
   const totalSalesQty = rows.reduce((sum, row) => sum + row.salesQty, 0);
   const totalSalesValue = rows.reduce((sum, row) => sum + row.salesValue, 0);
-  const totalClosingQty = rows.reduce((sum, row) => sum + row.closingQty, 0);
-  const totalClosingValue = rows.reduce((sum, row) => sum + row.closingValue, 0);
+  // Calculate closing as opening + purchase - sales (like StockSummaryReport)
+  const totalClosingQty = totalOpeningQty + totalPurchaseQty - totalSalesQty;
+  const totalClosingValue = totalOpeningValue + totalPurchaseValue - totalSalesValue;
 
   return (
     <div className="bg-background h-screen flex flex-col overflow-hidden">

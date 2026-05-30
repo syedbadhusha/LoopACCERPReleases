@@ -6,10 +6,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { CompanyProvider } from "./contexts/CompanyContext";
+import { PermissionProvider } from "./contexts/PermissionContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 const Index = lazy(() => import("./pages/Index"));
 const Auth = lazy(() => import("./pages/Auth"));
+const ChangePassword = lazy(() => import("./pages/ChangePassword"));
+const UserManagement = lazy(() => import("./pages/UserManagement"));
+const AdminLogin = lazy(() => import("./pages/AdminLogin"));
+const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const CompanySelection = lazy(() => import("./pages/CompanySelection"));
 const CreateCompany = lazy(() => import("./pages/CreateCompany"));
 const CompanyLogin = lazy(() => import("./pages/CompanyLogin"));
@@ -53,6 +58,9 @@ const OutstandingReceivableReport = lazy(
 const OutstandingPayableReport = lazy(
   () => import("./pages/reports/OutstandingPayableReport"),
 );
+const CompanyUserManagement = lazy(
+  () => import("./pages/CompanyUserManagement"),
+);
 
 const queryClient = new QueryClient();
 
@@ -87,10 +95,23 @@ const App: React.FC = () => (
         <Sonner />
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <CompanyProvider>
-            <Suspense fallback={<RouteFallback />}>
+            <PermissionProvider>
+              <Suspense fallback={<RouteFallback />}>
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/auth" element={<Auth />} />
+                <Route path="/admin" element={<AdminLogin />} />
+                <Route path="/admin/panel" element={<AdminPanel />} />
+                <Route path="/change-password" element={
+                  <ProtectedRoute>
+                    <ChangePassword />
+                  </ProtectedRoute>
+                } />
+                <Route path="/user-management" element={
+                  <ProtectedRoute>
+                    <UserManagement />
+                  </ProtectedRoute>
+                } />
                 
                 {/* Company Management Routes */}
                 <Route path="/company-selection" element={
@@ -251,6 +272,11 @@ const App: React.FC = () => (
                      <OutstandingPayableReport />
                    </ProtectedRoute>
                   } />
+                <Route path="/company-user-management" element={
+                  <ProtectedRoute requireCompanyLogin>
+                    <CompanyUserManagement />
+                  </ProtectedRoute>
+                } />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
@@ -258,6 +284,7 @@ const App: React.FC = () => (
 
               {/* Global Dashboard button - only visible after company login */}
               {/* <DashboardButton /> */}
+            </PermissionProvider>
             </CompanyProvider>
           </BrowserRouter>
         </TooltipProvider>

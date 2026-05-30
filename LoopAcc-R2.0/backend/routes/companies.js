@@ -5,7 +5,7 @@ import {
   updateCompanyService,
   loginToCompanyService,
 } from "../services/companyService.js";
-import { getDb } from "../db.js";
+import { getDb, getUserDb } from "../db.js";
 
 const router = express.Router();
 
@@ -60,11 +60,26 @@ router.post("/", async (req, res) => {
       });
     }
 
+    // Only license owners can create companies
+    const userDb = getUserDb();
+    const requestingUser = await userDb.collection("users").findOne({ id: String(userId) });
+    if (!requestingUser || !requestingUser.is_owner) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the license owner can create companies.",
+      });
+    }
+
     if (!companyData.name || !companyData.country) {
       return res.status(400).json({
         success: false,
         message: "Missing required company fields: name, country",
       });
+    }
+
+    // Pass license_id from body into companyData so it gets stored on the company
+    if (req.body.licenseId && !companyData.license_id) {
+      companyData.license_id = req.body.licenseId;
     }
 
     const result = await createCompanyService(companyData, userId);
@@ -86,6 +101,7 @@ router.post("/", async (req, res) => {
 router.get("/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
+    const { licenseId } = req.query;
 
     if (!userId) {
       return res.status(400).json({
@@ -94,7 +110,7 @@ router.get("/:userId", async (req, res) => {
       });
     }
 
-    const result = await getUserCompanies(userId);
+    const result = await getUserCompanies(userId, licenseId || null);
     return res.status(200).json(result);
   } catch (error) {
     console.error("Get companies API error:", error);
@@ -307,6 +323,16 @@ router.delete("/:companyId", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "companyId and userId are required",
+      });
+    }
+
+    // Only license owners can delete companies
+    const userDb = getUserDb();
+    const requestingUser = await userDb.collection("users").findOne({ id: String(userId) });
+    if (!requestingUser || !requestingUser.is_owner) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the license owner can delete companies.",
       });
     }
 

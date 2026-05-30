@@ -74,70 +74,7 @@ const OutstandingPayableReport = () => {
   };
 
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    const totalInvoice = outstandingData.reduce((sum, item) => sum + item.invoice_amount, 0);
-    const totalAllocated = outstandingData.reduce((sum, item) => sum + item.allocated_amount, 0);
-    const totalOutstanding = outstandingData.reduce((sum, item) => sum + item.outstanding_amount, 0);
-
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Outstanding Payables</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            .header { text-align: center; margin-bottom: 20px; }
-            h1 { margin: 0; }
-            .period { margin: 10px 0; font-weight: bold; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #000; padding: 8px; text-align: left; }
-            th { background-color: #f0f0f0; font-weight: bold; }
-            .text-right { text-align: right; }
-            .total-row { font-weight: bold; background-color: #f0f0f0; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>${selectedCompany?.name}</h1>
-            <h2>OUTSTANDING PAYABLES</h2>
-            <div class="period">As on: ${format(new Date(dateTo), 'dd/MM/yyyy')}</div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Invoice No.</th>
-                <th>Supplier</th>
-                <th class="text-right">Invoice Amount</th>
-                <th class="text-right">Paid</th>
-                <th class="text-right">Outstanding</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${outstandingData.map(item => `
-                <tr>
-                  <td>${format(new Date(item.voucher_date), 'dd/MM/yyyy')}</td>
-                  <td>${item.voucher_number}</td>
-                  <td>${item.ledger_name}</td>
-                  <td class="text-right">₹${item.invoice_amount.toFixed(2)}</td>
-                  <td class="text-right">₹${item.allocated_amount.toFixed(2)}</td>
-                  <td class="text-right">₹${item.outstanding_amount.toFixed(2)}</td>
-                </tr>
-              `).join('')}
-              <tr class="total-row">
-                <td colspan="3"><strong>TOTAL</strong></td>
-                <td class="text-right"><strong>₹${totalInvoice.toFixed(2)}</strong></td>
-                <td class="text-right"><strong>₹${totalAllocated.toFixed(2)}</strong></td>
-                <td class="text-right"><strong>₹${totalOutstanding.toFixed(2)}</strong></td>
-              </tr>
-            </tbody>
-          </table>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
+    window.print();
   };
 
   if (!selectedCompany) {

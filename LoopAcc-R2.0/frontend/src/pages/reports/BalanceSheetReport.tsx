@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { ArrowLeft, Download, Printer } from 'lucide-react';
 import { useCompany } from '@/contexts/CompanyContext';
 import { format, isValid, parseISO } from 'date-fns';
-
+import { API_BASE_URL } from '@/config/runtime';
 type StatementLine = {
   particular: string;
   amount: number;
@@ -93,19 +93,15 @@ const getFiscalYearStart = (referenceDate = new Date()) => {
 
 const BalanceSheetReport = () => {
   const navigate = useNavigate();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
   const currencySymbol = selectedCompany?.currency === 'INR' ? '₹' : selectedCompany?.currency === 'USD' ? '$' : selectedCompany?.currency || '₹';
 
-  const [dateFrom, setDateFrom] = useState(() => {
-    const saved = localStorage.getItem('balanceSheet_dateFrom');
-    if (saved) return saved;
-    return getFiscalYearStart();
-  });
+  const [dateFrom, setDateFrom] = useState(periodFrom);
+  const [dateTo, setDateTo] = useState(periodTo);
 
-  const [dateTo, setDateTo] = useState(() => {
-    const saved = localStorage.getItem('balanceSheet_dateTo');
-    return saved || format(new Date(), 'yyyy-MM-dd');
-  });
+  // Sync with global period when it changes
+  useEffect(() => { setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { setDateTo(periodTo); }, [periodTo]);
 
   const [reportData, setReportData] = useState<BalanceSheetData>({
     assetLines: [],
@@ -115,11 +111,6 @@ const BalanceSheetReport = () => {
   });
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('balanceSheet_dateFrom', dateFrom);
-    localStorage.setItem('balanceSheet_dateTo', dateTo);
-  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     if (selectedCompany && dateFrom && dateTo) {
@@ -139,8 +130,8 @@ const BalanceSheetReport = () => {
       });
 
       const [ledgerResp, groupResp, voucherResp, itemResp] = await Promise.all([
-        fetch(`http://localhost:5000/api/ledgers/report/balance-sheet?${params}`),
-        fetch(`http://localhost:5000/api/groups?companyId=${selectedCompany?.id || ''}`),
+        fetch(`${API_BASE_URL}/ledgers/report/balance-sheet?${params}`),
+        fetch(`${API_BASE_URL}/groups?companyId=${selectedCompany?.id || ''}`),
         fetch(`http://localhost:5000/api/vouchers?${params}`),
         fetch(`http://localhost:5000/api/items?companyId=${selectedCompany?.id || ''}`),
       ]);

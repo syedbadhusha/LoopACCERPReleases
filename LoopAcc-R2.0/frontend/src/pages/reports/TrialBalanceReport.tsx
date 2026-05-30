@@ -73,27 +73,17 @@ type TrialLine = {
 
 const TrialBalanceReport = () => {
   const navigate = useNavigate();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
 
-  const [dateFrom, setDateFrom] = useState(() => {
-    const saved = localStorage.getItem('trialBalance_dateFrom');
-    if (saved) return saved;
-    const today = new Date();
-    const year = today.getMonth() < 3 ? today.getFullYear() - 1 : today.getFullYear();
-    return format(new Date(year, 3, 1), 'yyyy-MM-dd');
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    const saved = localStorage.getItem('trialBalance_dateTo');
-    return saved || format(new Date(), 'yyyy-MM-dd');
-  });
+  const [dateFrom, setDateFrom] = useState(periodFrom);
+  const [dateTo, setDateTo] = useState(periodTo);
+
+  // Sync with global period when it changes
+  useEffect(() => { setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { setDateTo(periodTo); }, [periodTo]);
 
   const [lines, setLines] = useState<TrialLine[]>([]);
   const [grandTotal, setGrandTotal] = useState({ debit: 0, credit: 0 });
-
-  useEffect(() => {
-    localStorage.setItem('trialBalance_dateFrom', dateFrom);
-    localStorage.setItem('trialBalance_dateTo', dateTo);
-  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     if (selectedCompany && dateFrom && dateTo) {

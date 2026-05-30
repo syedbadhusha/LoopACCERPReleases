@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { ArrowLeft, BookOpen, Download, Edit, Printer, Trash2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Download, Edit, Printer, Trash2, Eye } from 'lucide-react';
+import { VoucherViewModal } from '@/components/VoucherViewModal';
+import AccountingVchViewForm from '../forms/AccountingVchViewForm';
+import InventoryVchViewForm from '../forms/InventoryVchViewForm';
+import POSViewForm from '../pos/POSViewForm';
+import { API_BASE_URL } from '@/config/runtime';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,6 +19,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 
 type GroupVoucherRow = {
   voucherId?: string;
+  voucherTypeId?: string;
   date: string;
   particulars: string;
   voucherType: string;
@@ -21,24 +28,45 @@ type GroupVoucherRow = {
   debit: number;
   credit: number;
   balance: number;
+  is_pos?: boolean;
 };
-
+const normalizeBool = (val: any) =>
+  val === true || val === "true" || val === 1;
 const GroupVouchersReport = () => {
   const navigate = useNavigate();
-  const { selectedCompany } = useCompany();
+  const { selectedCompany, periodFrom, periodTo } = useCompany();
   const { toast } = useToast();
 
-  const [dateFrom, setDateFrom] = useState(() => {
-    const saved = localStorage.getItem('groupVouchers_dateFrom');
-    if (saved) return saved;
-    const today = new Date();
-    const yearStart = new Date(today.getFullYear(), 3, 1);
-    return format(yearStart, 'yyyy-MM-dd');
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    const saved = localStorage.getItem('groupVouchers_dateTo');
-    return saved || format(new Date(), 'yyyy-MM-dd');
-  });
+  const [viewModal, setViewModal] = useState<{ open: boolean, voucherId?: string, voucherTypeId?: string, voucherType?: string }>(
+    { open: false }
+  );
+  const handleViewVoucher = (row: GroupVoucherRow) => {
+    const voucherId = String(row?.voucherId || '');
+    const voucherTypeId = String(row?.voucherTypeId || '');
+    const voucherType = String(row?.voucherType || '').toLowerCase();
+    const isPos = normalizeBool(row?.is_pos);
+     localStorage.setItem('groupVouchers_dateFrom', dateFrom);
+     localStorage.setItem('groupVouchers_dateTo', dateTo);
+      if (!voucherId || !voucherTypeId) return;
+    if (isPos) {
+      navigate(`/pos?view=${voucherId}`);
+      return;
+    }
+    setViewModal({ open: true, voucherId, voucherTypeId, voucherType });
+  };
+  const handlePrintVoucher = (row: GroupVoucherRow) => {
+    const voucherId = String(row?.voucherId || '');
+    const voucherTypeId = String(row?.voucherTypeId || '');
+    if (!voucherId || !voucherTypeId) return;
+    navigate(`/vouchers?typeId=${voucherTypeId}&edit=${voucherId}&autoPrint=1`, { state: { returnTo: '/reports/group-vouchers' } });
+  };
+
+  const [dateFrom, setDateFrom] = useState(periodFrom);
+  const [dateTo, setDateTo] = useState(periodTo);
+
+  // Sync with global period when it changes
+  useEffect(() => { setDateFrom(periodFrom); }, [periodFrom]);
+  useEffect(() => { setDateTo(periodTo); }, [periodTo]);
 
   const [groups, setGroups] = useState<any[]>([]);
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -52,10 +80,6 @@ const GroupVouchersReport = () => {
     }
   }, [selectedCompany]);
 
-  useEffect(() => {
-    localStorage.setItem('groupVouchers_dateFrom', dateFrom);
-    localStorage.setItem('groupVouchers_dateTo', dateTo);
-  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     if (selectedCompany && selectedGroup && dateFrom && dateTo) {
@@ -68,7 +92,7 @@ const GroupVouchersReport = () => {
       const params = new URLSearchParams({
         companyId: selectedCompany?.id || '',
       });
-      const resp = await fetch(`http://localhost:5000/api/groups?${params}`);
+      const resp = await fetch(`${API_BASE_URL}/groups?${params}`);
       if (!resp.ok) throw new Error('Failed to fetch groups');
 
       const json = await resp.json();
@@ -91,7 +115,7 @@ const GroupVouchersReport = () => {
         dateFrom,
         dateTo,
       });
-      const resp = await fetch(`http://localhost:5000/api/ledgers/report/group-vouchers?${params}`);
+      const resp = await fetch(`${API_BASE_URL}/ledgers/report/group-vouchers?${params}`);
       if (!resp.ok) throw new Error('Failed to fetch group vouchers report data');
 
       const json = await resp.json();
@@ -99,6 +123,7 @@ const GroupVouchersReport = () => {
       setOpeningBalance(Number(json?.data?.opening || 0));
       setReportData(Array.isArray(json?.data?.transactions) ? json.data.transactions.map((t: any) => ({
         ...t,
+        voucherTypeId: t.voucherTypeId || t.voucher_type_id || '',
         voucherTypeName: t.voucherTypeName || t.voucherType || '',
       })) : []);
     } catch (error) {
@@ -150,7 +175,7 @@ const GroupVouchersReport = () => {
     if (!voucherId) return;
     if (!confirm('Are you sure you want to delete this voucher?')) return;
     try {
-      const resp = await fetch(`http://localhost:5000/api/vouchers/${voucherId}`, {
+      const resp = await fetch(`${API_BASE_URL}/vouchers/${voucherId}`, {
         method: 'DELETE',
       });
       if (!resp.ok) throw new Error('Failed to delete voucher');
@@ -260,6 +285,19 @@ const GroupVouchersReport = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
+                                              {/* View-only voucher modal */}
+                                <VoucherViewModal open={viewModal.open} onOpenChange={open => setViewModal(v => ({ ...v, open }))}>
+                                  {viewModal.open && viewModal.voucherId && viewModal.voucherTypeId && (
+                                    viewModal.voucherType === 'sales' || viewModal.voucherType === 'purchase' || viewModal.voucherType === 'credit-note' || viewModal.voucherType === 'debit-note' ? (
+                                      <InventoryVchViewForm voucherId={viewModal.voucherId} voucherTypeId={viewModal.voucherTypeId} voucherType={viewModal.voucherType} onClose={() => setViewModal({ open: false })} />
+                                    ) : viewModal.voucherType === 'payment' || viewModal.voucherType === 'receipt' ? (
+                                      <AccountingVchViewForm voucherId={viewModal.voucherId} voucherTypeId={viewModal.voucherTypeId} onClose={() => setViewModal({ open: false })} />
+                                    ) : viewModal.voucherType === 'pos' ? (
+                                      <POSViewForm voucherId={viewModal.voucherId} onClose={() => setViewModal({ open: false })} />
+                                    ) : null
+                                  )}
+                                </VoucherViewModal>
+
               <Table className="border border-border">
                 <TableHeader>
                   <TableRow>
@@ -294,11 +332,23 @@ const GroupVouchersReport = () => {
                           <Button
                             size="sm"
                             variant="outline"
+                            onClick={() => handleViewVoucher(row)}
+                            disabled={!row?.voucherId}
+                            title="View"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
                             onClick={() => handleEditVoucher(row)}
                             disabled={!row?.voucherId}
+                            title="Edit"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
+                          {/* Print button removed from per-row actions */}
+                          {/* Print button removed from per-row actions */}
                           <Button
                             size="sm"
                             variant="outline"

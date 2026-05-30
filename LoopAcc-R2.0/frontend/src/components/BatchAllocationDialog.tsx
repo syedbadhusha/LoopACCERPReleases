@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Plus, X } from "lucide-react";
+import { API_BASE_URL } from "@/config/runtime";
 import {
   Select,
   SelectContent,
@@ -12,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { DialogDescription } from "@radix-ui/react-dialog";
 
 interface Batch {
   id: string;
@@ -141,7 +143,7 @@ export const BatchAllocationDialog = ({
   const loadBatches = async () => {
     try {
       setLoading(true);
-      const url = `http://localhost:5000/api/batch-allocations?itemId=${itemId}&companyId=${companyId}`;
+      const url = `${API_BASE_URL}/batch-allocations?itemId=${itemId}&companyId=${companyId}`;
       console.log(`[BatchAllocationDialog] Fetching batches from: ${url}`);
       console.log(`[BatchAllocationDialog] itemId=${itemId}, companyId=${companyId}`);
       
@@ -349,7 +351,7 @@ export const BatchAllocationDialog = ({
     try {
       setLoading(true);
       const openingValue = newBatchOpeningQty * newBatchOpeningRate;
-      const response = await fetch("http://localhost:5000/api/batch-allocations", {
+      const response = await fetch(`${API_BASE_URL}/batch-allocations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -423,9 +425,10 @@ export const BatchAllocationDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl flex flex-col max-h-[90vh]">
+      <DialogContent aria-describedby="undefined" className="max-w-2xl flex flex-col max-h-[90vh]">
         <DialogHeader>
           <DialogTitle>Batch Allocation - {itemName}</DialogTitle>
+          <DialogDescription>Allocate batches for the selected item</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 overflow-y-auto flex-1 pr-4">

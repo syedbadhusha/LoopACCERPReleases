@@ -15,6 +15,8 @@ import vouchersRouter from "./routes/vouchers.js";
 import settingsRouter from "./routes/settings.js";
 import billsRouter from "./routes/bills.js";
 import voucherTypesRouter from "./routes/voucherTypes.js";
+import adminRouter from "./routes/admin.js";
+import companyUsersRouter from "./routes/companyUsers.js";
 
 dotenv.config();
 
@@ -163,6 +165,7 @@ app.use(async (req, res, next) => {
 
 // Routes
 app.use("/api/auth", authRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/companies", companiesRouter);
 app.use("/api/groups", groupsRouter);
 app.use("/api/ledgers", ledgersRouter);
@@ -175,6 +178,7 @@ app.use("/api/vouchers", vouchersRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/bills", billsRouter);
 app.use("/api/voucher-types", voucherTypesRouter);
+app.use("/api/company-users", companyUsersRouter);
 
 // 404 handler
 app.use((req, res) => {
